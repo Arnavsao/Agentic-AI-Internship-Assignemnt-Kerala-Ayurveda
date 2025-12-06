@@ -11,3 +11,4 @@ pandas>=2.0.0
 numpy>=1.24.0
 tiktoken>=0.5.0
 pydantic>=2.0.0
+streamlit>=1.28.0
