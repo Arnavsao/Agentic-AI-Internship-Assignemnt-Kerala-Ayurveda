@@ -54,6 +54,7 @@ class AyurvedaRAGSystem:
         megallm_api_key = os.getenv("MEGALLM_API_KEY")
 
         self.embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
             openai_api_key=megallm_api_key,
             openai_api_base="https://ai.megallm.io/v1"
         )
