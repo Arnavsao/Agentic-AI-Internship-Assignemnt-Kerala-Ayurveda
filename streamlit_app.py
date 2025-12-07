@@ -51,22 +51,27 @@ if not os.getenv("MEGALLM_API_KEY"):
     st.stop()
 
 # Initialize RAG system with caching
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_rag_system():
     """Load and cache the RAG system"""
-    with st.spinner("Loading Kerala Ayurveda knowledge base..."):
-        try:
-            rag = AyurvedaRAGSystem()
-            rag.load_and_index_content()
-            return rag
-        except Exception as e:
-            st.error(f"Error loading RAG system: {str(e)}")
-            return None
+    try:
+        rag = AyurvedaRAGSystem()
+        rag.load_and_index_content()
+        return rag, None
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        return None, error_details
 
-rag = load_rag_system()
+with st.spinner("Loading Kerala Ayurveda knowledge base..."):
+    rag, error = load_rag_system()
 
 if rag is None:
-    st.error("Failed to initialize RAG system. Please check logs.")
+    st.error("Failed to initialize RAG system.")
+    if error:
+        with st.expander("Show Error Details"):
+            st.code(error, language="python")
+    st.info("💡 Try: Clear cache in Streamlit Cloud and redeploy")
     st.stop()
 
 # Main interface
