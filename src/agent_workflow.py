@@ -12,7 +12,7 @@ from datetime import datetime
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from rag_system import AyurvedaRAGSystem
+from src.rag_system import AyurvedaRAGSystem
 
 
 class AgentStep(Enum):

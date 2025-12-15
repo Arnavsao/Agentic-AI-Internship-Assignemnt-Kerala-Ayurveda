@@ -46,7 +46,7 @@ class AyurvedaRAGSystem:
     4. Citations include doc_id + section_id for traceable references
     """
 
-    def __init__(self, content_dir: str = ".", persist_dir: str = "./chroma_db"):
+    def __init__(self, content_dir: str = "data", persist_dir: str = "./chroma_db"):
         self.content_dir = Path(content_dir)
         self.persist_dir = persist_dir
 

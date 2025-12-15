@@ -17,8 +17,8 @@ from pathlib import Path
 import statistics
 
 from langchain_openai import ChatOpenAI
-from rag_system import AyurvedaRAGSystem, QueryResponse
-from agent_workflow import FinalArticle
+from src.rag_system import AyurvedaRAGSystem, QueryResponse
+from src.agent_workflow import FinalArticle
 
 
 @dataclass

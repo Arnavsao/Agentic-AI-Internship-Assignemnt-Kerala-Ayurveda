@@ -5,7 +5,7 @@ Demo interface for the assignment submission
 
 import streamlit as st
 import os
-from rag_system import AyurvedaRAGSystem
+from src.rag_system import AyurvedaRAGSystem
 
 # Page configuration
 st.set_page_config(
