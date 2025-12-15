@@ -10,7 +10,7 @@ from enum import Enum
 import json
 from datetime import datetime
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from src.rag_system import AyurvedaRAGSystem
 
@@ -99,11 +99,12 @@ class OutlineAgent:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        gemini_api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+        megallm_api_key = os.getenv("MEGALLM_API_KEY")
+        self.llm = ChatOpenAI(
+            model="gpt-4o-mini",
             temperature=0.3,
-            google_api_key=gemini_api_key
+            openai_api_key=megallm_api_key,
+            openai_api_base="https://ai.megallm.io/v1"
         )
 
     def generate_outline(self, brief: ArticleBrief) -> Outline:
@@ -189,11 +190,12 @@ class WriterAgent:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        gemini_api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+        megallm_api_key = os.getenv("MEGALLM_API_KEY")
+        self.llm = ChatOpenAI(
+            model="gpt-4o",
             temperature=0.2,
-            google_api_key=gemini_api_key
+            openai_api_key=megallm_api_key,
+            openai_api_base="https://ai.megallm.io/v1"
         )
 
     def write_draft(self, brief: ArticleBrief, outline: Outline) -> Draft:
@@ -309,11 +311,12 @@ class FactCheckerAgent:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        gemini_api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+        megallm_api_key = os.getenv("MEGALLM_API_KEY")
+        self.llm = ChatOpenAI(
+            model="gpt-4o",
             temperature=0,
-            google_api_key=gemini_api_key
+            openai_api_key=megallm_api_key,
+            openai_api_base="https://ai.megallm.io/v1"
         )
 
     def fact_check(self, draft: Draft) -> FactCheckResult:
@@ -392,11 +395,12 @@ class ToneEditorAgent:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        gemini_api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+        megallm_api_key = os.getenv("MEGALLM_API_KEY")
+        self.llm = ChatOpenAI(
+            model="gpt-4o",
             temperature=0.2,
-            google_api_key=gemini_api_key
+            openai_api_key=megallm_api_key,
+            openai_api_base="https://ai.megallm.io/v1"
         )
 
         # Load style guide from corpus

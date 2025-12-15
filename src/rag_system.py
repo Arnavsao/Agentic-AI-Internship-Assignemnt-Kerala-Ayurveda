@@ -13,8 +13,8 @@ import re
 # LangChain imports
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
+from langchain_openai import ChatOpenAI
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -51,21 +51,21 @@ class AyurvedaRAGSystem:
         self.content_dir = Path(content_dir)
         self.persist_dir = persist_dir
 
-        # Configure embeddings (local) and LLM (Google Gemini)
-        gemini_api_key = os.getenv("GOOGLE_API_KEY")
+        # Configure MegaLLM for LLM, use local embeddings for reliability
+        megallm_api_key = os.getenv("MEGALLM_API_KEY")
 
-        # Use local HuggingFace embeddings (no API needed)
+        # Use local HuggingFace embeddings (no API needed, faster, more reliable)
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
 
-        # Use Google Gemini for LLM
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+        self.llm = ChatOpenAI(
+            model="gpt-4o-mini",
             temperature=0.1,
-            google_api_key=gemini_api_key
+            openai_api_key=megallm_api_key,
+            openai_api_base="https://ai.megallm.io/v1"
         )
 
         self.vectorstore = None
