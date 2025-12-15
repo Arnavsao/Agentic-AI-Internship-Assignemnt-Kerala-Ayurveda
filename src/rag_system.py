@@ -13,7 +13,8 @@ import re
 # LangChain imports
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -50,13 +51,14 @@ class AyurvedaRAGSystem:
         self.content_dir = Path(content_dir)
         self.persist_dir = persist_dir
 
-        # Configure MegaLLM for embeddings and LLM
+        # Configure embeddings (local) and LLM (MegaLLM)
         megallm_api_key = os.getenv("MEGALLM_API_KEY")
 
-        self.embeddings = OpenAIEmbeddings(
-            model="text-embedding-ada-002",  # Use ada-002 for better compatibility
-            openai_api_key=megallm_api_key,
-            openai_api_base="https://ai.megallm.io/v1"
+        # Use local HuggingFace embeddings (no API needed)
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
         )
 
         self.llm = ChatOpenAI(
