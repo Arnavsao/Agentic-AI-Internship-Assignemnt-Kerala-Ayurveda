@@ -101,7 +101,7 @@ class OutlineAgent:
         self.rag = rag_system
         gemini_api_key = os.getenv("GOOGLE_API_KEY")
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
+            model="gemini-1.5-flash",
             temperature=0.3,
             google_api_key=gemini_api_key
         )
@@ -191,7 +191,7 @@ class WriterAgent:
         self.rag = rag_system
         gemini_api_key = os.getenv("GOOGLE_API_KEY")
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
+            model="gemini-1.5-flash",
             temperature=0.2,
             google_api_key=gemini_api_key
         )
@@ -311,7 +311,7 @@ class FactCheckerAgent:
         self.rag = rag_system
         gemini_api_key = os.getenv("GOOGLE_API_KEY")
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
+            model="gemini-1.5-flash",
             temperature=0,
             google_api_key=gemini_api_key
         )
@@ -394,7 +394,7 @@ class ToneEditorAgent:
         self.rag = rag_system
         gemini_api_key = os.getenv("GOOGLE_API_KEY")
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
+            model="gemini-1.5-flash",
             temperature=0.2,
             google_api_key=gemini_api_key
         )

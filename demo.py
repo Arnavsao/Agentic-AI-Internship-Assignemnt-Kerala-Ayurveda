@@ -6,7 +6,7 @@ Run this to test the system locally
 import os
 from dotenv import load_dotenv
 from src.rag_system import AyurvedaRAGSystem
-from src.agent_workflow import BlogWorkflow
+from src.agent_workflow import ArticleWorkflowOrchestrator
 
 # Load environment variables
 load_dotenv()
@@ -90,7 +90,7 @@ def demo_agent_workflow():
         return
 
     print("\n🤖 Initializing agent workflow...")
-    workflow = BlogWorkflow()
+    workflow = ArticleWorkflowOrchestrator()
     print("✓ Agents initialized!")
 
     # Example topic

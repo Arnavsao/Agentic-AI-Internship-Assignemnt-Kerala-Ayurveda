@@ -185,7 +185,7 @@ class RAGEvaluator:
         self.rag = rag_system
         gemini_api_key = os.getenv("GOOGLE_API_KEY")
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
+            model="gemini-1.5-flash",
             temperature=0,
             google_api_key=gemini_api_key
         )
@@ -326,7 +326,7 @@ class ArticleEvaluator:
     def __init__(self):
         gemini_api_key = os.getenv("GOOGLE_API_KEY")
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
+            model="gemini-1.5-flash",
             temperature=0,
             google_api_key=gemini_api_key
         )
