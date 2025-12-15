@@ -32,7 +32,7 @@ with st.sidebar:
     Built with:
     - LangChain
     - ChromaDB
-    - MegaLLM API
+    - Google Gemini API
     """)
 
     st.header("Example Questions")
@@ -45,9 +45,9 @@ with st.sidebar:
     """)
 
 # Check for API key
-if not os.getenv("MEGALLM_API_KEY"):
-    st.error("⚠️ MEGALLM_API_KEY not configured. Please add it in Streamlit Cloud settings.")
-    st.info("Go to: App settings → Secrets → Add MEGALLM_API_KEY")
+if not os.getenv("GOOGLE_API_KEY"):
+    st.error("⚠️ GOOGLE_API_KEY not configured. Please add it in Streamlit Cloud settings.")
+    st.info("Go to: App settings → Secrets → Add GOOGLE_API_KEY")
     st.stop()
 
 # Initialize RAG system with caching
