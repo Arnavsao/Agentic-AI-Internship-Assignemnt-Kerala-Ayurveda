@@ -1,0 +1,24 @@
+# Render.com deployment configuration
+# For more info: https://render.com/docs/yaml-spec
+
+services:
+  - type: web
+    name: kerala-ayurveda-rag
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free  # Change to 'starter' or 'standard' for production
+    region: oregon  # Options: oregon, frankfurt, singapore
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: MEGALLM_API_KEY
+        sync: false  # Set this manually in Render dashboard
+      - key: CONTENT_DIR
+        value: data
+      - key: PERSIST_DIR
+        value: ./chroma_db
+    # Resource limits (for paid plans)
+    # resources:
+    #   memory: 2GB
+    #   cpu: 1
+

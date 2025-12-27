@@ -1,0 +1,19 @@
+\resumeProject
+  {Multi-Agent RAG System for Medical Content | Kerala Ayurveda Chatbot \href{https://github.com/Arnavsao/Agentic-AI}{\faGithub}} 
+  {Python, LangChain, ChromaDB, Google Gemini API, HuggingFace Transformers, Streamlit} 
+  {Sep 2024}
+
+  \resumeItemListStart
+
+\item{Engineered production-ready RAG pipeline with adaptive chunking (400-800 chars by doc type), semantic retrieval using ChromaDB with HuggingFace embeddings, and hybrid top-k strategy (retrieve 5, use top-3) for optimal relevance and token efficiency.}
+
+\item{Built 5-agent content generation workflow with LangChain: Outline Agent (corpus verification), Writer Agent (per-section RAG), Fact-Checker (auto-rejects <70\% grounding score), Tone Editor (brand voice), and Orchestrator with iterative refinement loops.}
+
+\item{Designed automated fact-checking system with LLM-based claim extraction, citation validation, and 0.7 grounding threshold preventing hallucination in medical content; enforced safety disclaimers via system prompts and temperature tuning (0.1).}
+
+\item{Developed comprehensive evaluation framework with golden set benchmarks, automated metrics (coverage, citation accuracy, hallucination detection, tone compliance), and JSONL tracking achieving >80\% coverage and >85\% citation accuracy.}
+
+\item{Delivered structured citation system with doc\_id + section\_id + relevance scores for full traceability; integrated Google Gemini API with cost-optimized migration; created multiple deployment interfaces (Streamlit web UI, CLI demo, test suite) with type-safe dataclasses.}
+
+\resumeItemListEnd
+

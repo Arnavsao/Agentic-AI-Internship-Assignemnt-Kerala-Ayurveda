@@ -1,0 +1,71 @@
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+FLOWCHARTS_VISUAL.md
+INTERVIEW_*.md
+QUICK_*.md
+CODE_WALKTHROUGH.md
+HOW_TO_RUN.md
+RUN_INSTRUCTIONS.md
+DEPLOYMENT_GUIDE.md
+
+# ChromaDB (will be created in container)
+chroma_db/
+*.db
+*.sqlite
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+

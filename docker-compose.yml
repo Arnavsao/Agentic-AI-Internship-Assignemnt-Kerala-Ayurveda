@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  streamlit-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kerala-ayurveda-rag
+    ports:
+      - "8501:8501"
+    environment:
+      - MEGALLM_API_KEY=${MEGALLM_API_KEY}
+      - CONTENT_DIR=data
+      - PERSIST_DIR=./chroma_db
+    volumes:
+      # Persist ChromaDB index
+      - ./chroma_db:/app/chroma_db
+      # Mount data directory (optional, if you want to update content without rebuild)
+      - ./data:/app/data:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
