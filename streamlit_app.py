@@ -35,7 +35,7 @@ with st.sidebar:
     Built with:
     - LangChain
     - ChromaDB
-    - MegaLLM API
+    - Google Gemini API
     """)
 
     st.header("Example Questions")
@@ -48,9 +48,9 @@ with st.sidebar:
     """)
 
 # Check for API key
-if not os.getenv("MEGALLM_API_KEY"):
-    st.error("⚠️ MEGALLM_API_KEY not configured. Please add it in .env file.")
-    st.info("Create a `.env` file with: `MEGALLM_API_KEY=your_key_here`")
+if not os.getenv("GOOGLE_API_KEY"):
+    st.error("⚠️ GOOGLE_API_KEY not configured. Please add it in .env file.")
+    st.info("Create a `.env` file with: `GOOGLE_API_KEY=your_key_here`")
     st.stop()
 
 # Initialize RAG system with caching
