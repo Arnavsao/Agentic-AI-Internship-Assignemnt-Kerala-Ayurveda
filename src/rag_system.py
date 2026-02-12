@@ -54,7 +54,7 @@ class AyurvedaRAGSystem:
         # Configure Gemini
         google_api_key = os.getenv("GOOGLE_API_KEY")
 
-        # Use local HuggingFace embeddings (no API needed, faster, more reliable)
+        # local HuggingFace embeddings (no API needed, faster, more reliable)
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             model_kwargs={'device': 'cpu'},
@@ -100,7 +100,7 @@ class AyurvedaRAGSystem:
         """
         chunk_size = self.chunk_sizes.get(doc_type, 600)
 
-        # Use recursive splitter with markdown-aware splitting
+        # recursive splitter with markdown-aware splitting
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=100,
