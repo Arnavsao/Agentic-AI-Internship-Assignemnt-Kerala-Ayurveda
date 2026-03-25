@@ -12,23 +12,22 @@ load_dotenv()
 from src.rag_system import AyurvedaRAGSystem
 from src.agent_workflow import ArticleWorkflowOrchestrator, ArticleBrief
 
-# ─── Page configuration ────────────────────────────────────────────────────────
+# Page configuration
 st.set_page_config(
     page_title="Kerala Ayurveda AI System",
     page_icon="🌿",
     layout="wide"
 )
 
-# ─── Sidebar ───────────────────────────────────────────────────────────────────
+# Sidebar
 with st.sidebar:
-    st.image("https://img.icons8.com/color/96/lotus.png", width=64)
     st.title("Kerala Ayurveda AI")
     st.markdown("*Agentic AI Internship Assignment*")
     st.divider()
 
-    st.header("📚 Knowledge Base")
+    st.header("Knowledge Base")
     st.markdown("""
-    **10 documents · 57+ chunks**
+    **10 documents · 132 chunks**
 
     | Document | Type |
     |---|---|
@@ -41,18 +40,31 @@ with st.sidebar:
     | Triphala Capsules | Product |
     | Stress Support Program | Treatment |
     | Products Catalog (8) | CSV |
-    | **Astanga Hridaya** *(Vagbhat, 24pp)* | **📖 PDF Book** |
+    | Astanga Hridaya (Vagbhat, 24pp) | PDF Book |
     """)
+
+    st.divider()
+
+    # Key pool status
+    st.header("API Key Pool")
+    try:
+        from src.key_manager import GeminiKeyManager
+        km = GeminiKeyManager()
+        status = km.status()
+        st.markdown(f"**{status['total_keys']} key(s) loaded**")
+        st.caption(f"Active: key {status['active_key_index']} of {status['total_keys']}")
+    except Exception as e:
+        st.warning(f"Key manager: {e}")
 
     st.divider()
     st.caption("Stack: Google Gemini 2.5 Flash · ChromaDB · LangChain · HuggingFace Embeddings")
 
-# ─── API Key check ─────────────────────────────────────────────────────────────
-if not os.getenv("GOOGLE_API_KEY"):
-    st.error("⚠️ GOOGLE_API_KEY not configured. Please add it in .env file.")
+# API Key check
+if not os.getenv("GOOGLE_API_KEY") and not os.getenv("GOOGLE_API_KEY_1"):
+    st.error("GOOGLE_API_KEY not configured. Please add it in .env file.")
     st.stop()
 
-# ─── Shared RAG system (cached) ────────────────────────────────────────────────
+# Shared RAG system (cached)
 @st.cache_resource(show_spinner=False)
 def load_rag_system():
     try:
@@ -63,7 +75,7 @@ def load_rag_system():
         import traceback
         return None, traceback.format_exc()
 
-with st.spinner("🌿 Loading Kerala Ayurveda knowledge base..."):
+with st.spinner("Loading Kerala Ayurveda knowledge base..."):
     rag, error = load_rag_system()
 
 if rag is None:
@@ -73,15 +85,15 @@ if rag is None:
             st.code(error, language="python")
     st.stop()
 
-# ─── Tabs ──────────────────────────────────────────────────────────────────────
-tab_qa, tab_agent = st.tabs(["🔍 RAG Q&A", "🤖 Article Generator"])
+# Tabs
+tab_qa, tab_agent = st.tabs(["RAG Q&A", "Article Generator"])
 
 
 # ══════════════════════════════════════════════════════════════
 # TAB 1 — RAG Q&A
 # ══════════════════════════════════════════════════════════════
 with tab_qa:
-    st.header("🔍 Ask the Knowledge Base")
+    st.header("Ask the Knowledge Base")
     st.markdown("Ask any question about Kerala Ayurveda — products, doshas, treatments, or wellness concepts.")
 
     col_input, col_examples = st.columns([3, 1])
@@ -91,7 +103,7 @@ with tab_qa:
             placeholder="e.g. What are the key benefits of Ashwagandha tablets?",
             label_visibility="collapsed"
         )
-        search_btn = st.button("Get Answer ✨", type="primary", use_container_width=True)
+        search_btn = st.button("Get Answer", type="primary", use_container_width=True)
 
     with col_examples:
         st.markdown("**Try these:**")
@@ -101,6 +113,7 @@ with tab_qa:
             "Can Ayurveda help with stress?",
             "What is Vata dosha?",
             "Tell me about the Stress Support Program",
+            "What does Astanga Hridaya say about daily routine?",
         ]
         for ex in examples:
             if st.button(ex, key=f"ex_{ex[:20]}", use_container_width=True):
@@ -112,12 +125,12 @@ with tab_qa:
             try:
                 response = rag.answer_user_query(query)
 
-                st.markdown("### 💬 Answer")
+                st.markdown("### Answer")
                 st.markdown(response.answer)
 
-                st.markdown("### 📚 Sources")
+                st.markdown("### Sources")
                 for i, citation in enumerate(response.citations, 1):
-                    with st.expander(f"Source {i}: `{citation.doc_id}`  —  {citation.relevance_score:.1%} relevance"):
+                    with st.expander(f"Source {i}: {citation.doc_id}  —  {citation.relevance_score:.1%} relevance"):
                         st.markdown(f"**Section:** {citation.section_id}")
                         st.text(citation.content_snippet)
 
@@ -138,27 +151,27 @@ with tab_qa:
 # TAB 2 — AGENT WORKFLOW
 # ══════════════════════════════════════════════════════════════
 with tab_agent:
-    st.header("🤖 Multi-Agent Article Generator")
+    st.header("Multi-Agent Article Generator")
     st.markdown(
         "Fill in an article brief and run the full **4-agent pipeline**: "
         "Outline → Write → Fact-Check → Tone Edit → Final Article."
     )
 
-    # ── Info banner ──────────────────────────────────────────
-    with st.expander("ℹ️ How the pipeline works", expanded=False):
+    with st.expander("How the pipeline works", expanded=False):
         st.markdown("""
         | Step | Agent | What it does |
         |------|-------|-------------|
         | 1 | **Outline Agent** | Queries the corpus, creates a structured section outline |
         | 2 | **Writer Agent** | Retrieves RAG context per section, writes the full draft with citations |
-        | 3 | **Fact-Checker Agent** | Scores grounding (≥0.7 required), flags unsupported claims |
+        | 3 | **Fact-Checker Agent** | Scores grounding (>=0.7 required), flags unsupported claims |
         | 4 | **Tone Editor Agent** | Checks brand voice, revises if needed — never removes citations |
 
-        ⏱️ **Takes approx. 2–4 minutes** — each agent makes separate Gemini API calls.
+        Takes approx. 2–4 minutes — each agent makes separate Gemini API calls.
+        Keys rotate automatically if a quota limit is hit.
         """)
 
-    # ── Article Brief Form ───────────────────────────────────
-    st.subheader("📝 Article Brief")
+    # Article Brief Form
+    st.subheader("Article Brief")
 
     with st.form("article_brief_form"):
         col1, col2 = st.columns(2)
@@ -195,9 +208,9 @@ with tab_agent:
                 help="Comma-separated product names from the catalog"
             )
 
-        submitted = st.form_submit_button("🚀 Generate Article", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Generate Article", type="primary", use_container_width=True)
 
-    # ── Pipeline Execution ───────────────────────────────────
+    # Pipeline Execution
     if submitted:
         if not topic or not key_points_raw:
             st.error("Topic and Key Points are required.")
@@ -213,10 +226,9 @@ with tab_agent:
                 must_include_products=products
             )
 
-            # Live progress display
             st.divider()
-            st.subheader("⚙️ Pipeline Progress")
-            progress = st.progress(0, text="Starting pipeline…")
+            st.subheader("Pipeline Progress")
+            progress = st.progress(0, text="Starting pipeline...")
             status_box = st.empty()
 
             step_col1, step_col2, step_col3, step_col4 = st.columns(4)
@@ -225,45 +237,43 @@ with tab_agent:
             s3 = step_col3.empty()
             s4 = step_col4.empty()
 
-            def update_step(n, label, done=False):
-                icons = ["⏳", "✅"]
+            def update_step(n):
+                labels = ["Outline", "Writer", "Fact-Check", "Tone Edit"]
                 cols = [s1, s2, s3, s4]
-                for i, (col, lbl) in enumerate(zip(cols, ["Outline", "Writer", "Fact-Check", "Tone Edit"])):
+                for i, (col, lbl) in enumerate(zip(cols, labels)):
                     if i < n:
-                        col.success(f"✅ {lbl}")
+                        col.success(f"{lbl} - Done")
                     elif i == n:
-                        col.info(f"⚙️ {lbl}…")
+                        col.info(f"{lbl} - Running")
                     else:
                         col.empty()
 
             try:
-                # Monkey-patch orchestrator to give live status updates
                 orchestrator = ArticleWorkflowOrchestrator(rag)
 
-                update_step(0, "Outline")
-                status_box.info("**Step 1 / 4** — Outline Agent is verifying corpus coverage and building the article structure…")
-                progress.progress(10, text="Generating outline…")
+                update_step(0)
+                status_box.info("**Step 1 / 4** — Outline Agent: verifying corpus coverage and building article structure...")
+                progress.progress(10, text="Generating outline...")
 
                 outline = orchestrator.outline_agent.generate_outline(brief)
-                update_step(1, "Writer")
-                progress.progress(30, text="Outline complete — writing draft…")
-                status_box.info("**Step 2 / 4** — Writer Agent is fetching RAG context per section and writing the full draft…")
+                update_step(1)
+                progress.progress(30, text="Outline complete — writing draft...")
+                status_box.info("**Step 2 / 4** — Writer Agent: fetching RAG context per section and writing the full draft...")
 
                 draft = orchestrator.writer_agent.write_draft(brief, outline)
-                update_step(2, "Fact-Check")
-                progress.progress(55, text="Draft complete — fact-checking…")
-                status_box.info("**Step 3 / 4** — Fact-Checker Agent is verifying all claims are grounded in the knowledge base…")
+                update_step(2)
+                progress.progress(55, text="Draft complete — fact-checking...")
+                status_box.info("**Step 3 / 4** — Fact-Checker Agent: verifying all claims are grounded in the knowledge base...")
 
                 fact_check = orchestrator.fact_checker.fact_check(draft)
-                update_step(3, "Tone Edit")
-                progress.progress(80, text="Fact-check complete — editing tone…")
-                status_box.info("**Step 4 / 4** — Tone Editor Agent is reviewing brand voice and style compliance…")
+                update_step(3)
+                progress.progress(80, text="Fact-check complete — editing tone...")
+                status_box.info("**Step 4 / 4** — Tone Editor Agent: reviewing brand voice and style compliance...")
 
                 tone = orchestrator.tone_editor.edit_tone(draft, fact_check)
                 progress.progress(100, text="Done!")
-                status_box.success("✅ All agents complete!")
+                status_box.success("All agents complete!")
 
-                # Build final content
                 final_content = tone.revised_content if tone.revised_content != "NO CHANGES" else draft.content
                 ready = (
                     fact_check.grounding_score >= 0.7
@@ -271,35 +281,28 @@ with tab_agent:
                     and len(draft.citations) > 0
                 )
 
-                # ── Results ──────────────────────────────────
+                # Results
                 st.divider()
-                st.subheader("📄 Generated Article")
+                st.subheader("Generated Article")
 
-                # Score cards
                 mc1, mc2, mc3, mc4 = st.columns(4)
                 mc1.metric("Fact-Check Score", f"{fact_check.grounding_score:.0%}",
-                           delta="✅ Pass" if fact_check.is_grounded else "⚠️ Review",
+                           delta="Pass" if fact_check.is_grounded else "Review needed",
                            delta_color="normal" if fact_check.is_grounded else "inverse")
                 mc2.metric("Style Score", f"{tone.style_score:.0%}",
-                           delta="✅ Pass" if tone.style_score >= 0.7 else "⚠️ Review",
+                           delta="Pass" if tone.style_score >= 0.7 else "Review needed",
                            delta_color="normal" if tone.style_score >= 0.7 else "inverse")
                 mc3.metric("Citations Found", len(draft.citations))
-                mc4.metric(
-                    "Ready for Editor",
-                    "Yes ✅" if ready else "Needs Review ⚠️",
-                )
+                mc4.metric("Ready for Editor", "Yes" if ready else "Needs Review")
 
-                # Article content
                 st.markdown(final_content)
 
-                # Outline used
-                with st.expander("📋 Outline Used"):
+                with st.expander("Outline Used"):
                     st.markdown(f"**{outline.title}**")
                     for section in outline.sections:
                         st.markdown(f"- **{section['heading']}** — {section['key_points']}")
 
-                # Fact-check details
-                with st.expander(f"🔎 Fact-Check Details  (score: {fact_check.grounding_score:.0%})"):
+                with st.expander(f"Fact-Check Details  (score: {fact_check.grounding_score:.0%})"):
                     if fact_check.unsupported_claims:
                         st.warning(f"{len(fact_check.unsupported_claims)} unsupported claim(s) found:")
                         for claim in fact_check.unsupported_claims:
@@ -312,18 +315,16 @@ with tab_agent:
                     else:
                         st.success("All claims are grounded in the knowledge base.")
 
-                # Tone edit details
-                with st.expander(f"✍️ Tone Edit Details  (score: {tone.style_score:.0%})"):
+                with st.expander(f"Tone Edit Details  (score: {tone.style_score:.0%})"):
                     if tone.issues:
                         for issue in tone.issues:
-                            st.markdown(f"- **{issue.get('location', 'General')}:** {issue.get('issue', '')} → *{issue.get('suggestion', '')}*")
+                            st.markdown(f"- **{issue.get('location', 'General')}:** {issue.get('issue', '')} — *{issue.get('suggestion', '')}*")
                     else:
                         st.success("Brand voice and style are fully compliant.")
 
-                # Download
                 st.divider()
                 st.download_button(
-                    label="⬇️ Download Article (Markdown)",
+                    label="Download Article (Markdown)",
                     data=final_content,
                     file_name=f"kerala_ayurveda_{topic[:30].replace(' ', '_').lower()}.md",
                     mime="text/markdown",
@@ -336,7 +337,7 @@ with tab_agent:
                 with st.expander("Error Details"):
                     st.exception(e)
 
-# ─── Footer ────────────────────────────────────────────────────────────────────
+# Footer
 st.divider()
 st.markdown(
     "<div style='text-align:center;color:gray;font-size:0.85em'>"

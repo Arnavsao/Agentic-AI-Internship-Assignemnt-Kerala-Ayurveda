@@ -18,6 +18,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
+from src.key_manager import GeminiKeyManager
 
 
 @dataclass
@@ -52,20 +53,14 @@ class AyurvedaRAGSystem:
         self.content_dir = Path(content_dir)
         self.persist_dir = persist_dir
 
-        # Configure Gemini
-        google_api_key = os.getenv("GOOGLE_API_KEY")
+        # Key manager handles multi-key rotation on quota exhaustion
+        self.key_manager = GeminiKeyManager()
 
-        # local HuggingFace embeddings (no API needed, faster, more reliable)
+        # Local HuggingFace embeddings (no API needed, fast, reliable)
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
-        )
-
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.1,
-            google_api_key=google_api_key
         )
 
         self.vectorstore = None
@@ -292,9 +287,19 @@ Question: {query}
 Please provide a helpful answer based on the context above. Include [Source X] citations in your response.""")
         ])
 
-        # Generate answer
-        chain = prompt_template | self.llm
-        response = chain.invoke({"context": context, "query": query})
+        # Generate answer with automatic key rotation on quota exhaustion
+        def create_llm(api_key):
+            return ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                temperature=0.1,
+                google_api_key=api_key
+            )
+
+        def invoke(llm):
+            chain = prompt_template | llm
+            return chain.invoke({"context": context, "query": query})
+
+        response = self.key_manager.invoke_with_rotation(create_llm, invoke)
         answer = response.content
 
         # Build citations

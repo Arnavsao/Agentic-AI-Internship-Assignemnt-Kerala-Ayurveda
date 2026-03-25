@@ -16,6 +16,7 @@ from datetime import datetime
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from src.rag_system import AyurvedaRAGSystem
+from src.key_manager import GeminiKeyManager
 
 
 class AgentStep(Enum):
@@ -100,19 +101,17 @@ class OutlineAgent:
     - Query RAG system to verify each section topic is grounded
     """
 
-    def __init__(self, rag_system: AyurvedaRAGSystem):
+    def __init__(self, rag_system: AyurvedaRAGSystem, key_manager: GeminiKeyManager):
         self.rag = rag_system
-        google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.3,
-            google_api_key=google_api_key
-        )
+        self.key_manager = key_manager
+        self._model_kwargs = {"model": "gemini-2.5-flash", "temperature": 0.3}
+
+    def _create_llm(self, api_key):
+        return ChatGoogleGenerativeAI(google_api_key=api_key, **self._model_kwargs)
 
     def generate_outline(self, brief: ArticleBrief) -> Outline:
         """Generate article outline based on brief"""
 
-        # First, verify topic coverage in corpus
         coverage_check = self.rag.answer_user_query(
             f"What information is available about {brief.topic}?"
         )
@@ -152,17 +151,20 @@ Must Include Products: {products}
 Generate the outline as JSON.""")
         ])
 
-        chain = prompt_template | self.llm
-        response = chain.invoke({
+        invoke_input = {
             "corpus_context": coverage_check.answer,
             "topic": brief.topic,
             "audience": brief.target_audience,
             "key_points": ", ".join(brief.key_points),
             "word_count": brief.word_count_target,
             "products": ", ".join(brief.must_include_products) if brief.must_include_products else "None specified"
-        })
+        }
 
-        # Parse JSON response
+        response = self.key_manager.invoke_with_rotation(
+            self._create_llm,
+            lambda llm: (prompt_template | llm).invoke(invoke_input)
+        )
+
         outline_data = json.loads(response.content)
 
         return Outline(
@@ -190,14 +192,13 @@ class WriterAgent:
     - Use RAG context retrieval for each section
     """
 
-    def __init__(self, rag_system: AyurvedaRAGSystem):
+    def __init__(self, rag_system: AyurvedaRAGSystem, key_manager: GeminiKeyManager):
         self.rag = rag_system
-        google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.2,
-            google_api_key=google_api_key
-        )
+        self.key_manager = key_manager
+        self._model_kwargs = {"model": "gemini-2.5-flash", "temperature": 0.2}
+
+    def _create_llm(self, api_key):
+        return ChatGoogleGenerativeAI(google_api_key=api_key, **self._model_kwargs)
 
     def write_draft(self, brief: ArticleBrief, outline: Outline) -> Draft:
         """Write full article draft based on outline"""
@@ -265,13 +266,17 @@ Target word count: {word_count}
 Write the full article with citations.""")
         ])
 
-        chain = prompt_template | self.llm
-        response = chain.invoke({
+        invoke_input = {
             "title": outline.title,
             "outline": json.dumps(outline.sections, indent=2),
             "context": context_text,
             "word_count": outline.estimated_word_count
-        })
+        }
+
+        response = self.key_manager.invoke_with_rotation(
+            self._create_llm,
+            lambda llm: (prompt_template | llm).invoke(invoke_input)
+        )
 
         content = response.content
         word_count = len(content.split())
@@ -310,14 +315,13 @@ class FactCheckerAgent:
     - Flag any medical claims without source
     """
 
-    def __init__(self, rag_system: AyurvedaRAGSystem):
+    def __init__(self, rag_system: AyurvedaRAGSystem, key_manager: GeminiKeyManager):
         self.rag = rag_system
-        google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0,
-            google_api_key=google_api_key
-        )
+        self.key_manager = key_manager
+        self._model_kwargs = {"model": "gemini-2.5-flash", "temperature": 0}
+
+    def _create_llm(self, api_key):
+        return ChatGoogleGenerativeAI(google_api_key=api_key, **self._model_kwargs)
 
     def fact_check(self, draft: Draft) -> FactCheckResult:
         """Verify all claims in draft are supported by corpus"""
@@ -348,11 +352,15 @@ Extracted citations: {citations}
 Analyze the article and return JSON.""")
         ])
 
-        chain = prompt_template | self.llm
-        response = chain.invoke({
+        invoke_input = {
             "article": draft.content,
             "citations": json.dumps(draft.citations, indent=2)
-        })
+        }
+
+        response = self.key_manager.invoke_with_rotation(
+            self._create_llm,
+            lambda llm: (prompt_template | llm).invoke(invoke_input)
+        )
 
         # Parse response
         result_data = json.loads(response.content)
@@ -393,14 +401,13 @@ class ToneEditorAgent:
     - Flag if safety language is weakened
     """
 
-    def __init__(self, rag_system: AyurvedaRAGSystem):
+    def __init__(self, rag_system: AyurvedaRAGSystem, key_manager: GeminiKeyManager):
         self.rag = rag_system
-        google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.2,
-            google_api_key=google_api_key
-        )
+        self.key_manager = key_manager
+        self._model_kwargs = {"model": "gemini-2.5-flash", "temperature": 0.2}
+
+    def _create_llm(self, api_key):
+        return ChatGoogleGenerativeAI(google_api_key=api_key, **self._model_kwargs)
 
         # Load style guide from corpus
         style_guide_response = rag_system.answer_user_query(
@@ -410,6 +417,12 @@ class ToneEditorAgent:
 
     def edit_tone(self, draft: Draft, fact_check: FactCheckResult) -> ToneCheckResult:
         """Review and improve tone/style while preserving facts"""
+
+        # Load style guide fresh (uses RAG's own key rotation)
+        style_guide_response = self.rag.answer_user_query(
+            "What are Kerala Ayurveda's content style and tone guidelines?"
+        )
+        style_guide_context = style_guide_response.answer
 
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", """You are a style editor for Kerala Ayurveda content.
@@ -444,13 +457,17 @@ Grounding score: {grounding_score}
 Return JSON analysis.""")
         ])
 
-        chain = prompt_template | self.llm
-        response = chain.invoke({
-            "style_guide": self.style_guide_context,
+        invoke_input = {
+            "style_guide": style_guide_context,
             "article": draft.content,
             "fact_check_passed": fact_check.is_grounded,
             "grounding_score": fact_check.grounding_score
-        })
+        }
+
+        response = self.key_manager.invoke_with_rotation(
+            self._create_llm,
+            lambda llm: (prompt_template | llm).invoke(invoke_input)
+        )
 
         result_data = json.loads(response.content)
 
@@ -469,15 +486,17 @@ class ArticleWorkflowOrchestrator:
     """
     Orchestrates the multi-agent workflow for article generation
 
-    Workflow: Brief → Outline → Draft → Fact-Check → Tone Edit → Final Review
+    Workflow: Brief -> Outline -> Draft -> Fact-Check -> Tone Edit -> Final Review
     """
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        self.outline_agent = OutlineAgent(rag_system)
-        self.writer_agent = WriterAgent(rag_system)
-        self.fact_checker = FactCheckerAgent(rag_system)
-        self.tone_editor = ToneEditorAgent(rag_system)
+        # Share a single key manager across all agents so rotation is coordinated
+        km = rag_system.key_manager
+        self.outline_agent = OutlineAgent(rag_system, km)
+        self.writer_agent = WriterAgent(rag_system, km)
+        self.fact_checker = FactCheckerAgent(rag_system, km)
+        self.tone_editor = ToneEditorAgent(rag_system, km)
 
     def generate_article(self, brief: ArticleBrief, max_iterations: int = 2) -> FinalArticle:
         """
