@@ -8,7 +8,10 @@ Implements:
 - Human-in-the-loop evaluation interface
 """
 
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 from typing import List, Dict, Optional
 from dataclasses import dataclass, asdict
@@ -16,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 import statistics
 
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from src.rag_system import AyurvedaRAGSystem, QueryResponse
 from src.agent_workflow import FinalArticle
 
@@ -183,12 +186,11 @@ class RAGEvaluator:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        megallm_api_key = os.getenv("MEGALLM_API_KEY")
-        self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
             temperature=0,
-            openai_api_key=megallm_api_key,
-            openai_api_base="https://ai.megallm.io/v1"
+            google_api_key=google_api_key
         )
         self.results_dir = Path("evaluation_results")
         self.results_dir.mkdir(exist_ok=True)
@@ -325,12 +327,11 @@ class ArticleEvaluator:
     """Evaluates generated articles"""
 
     def __init__(self):
-        megallm_api_key = os.getenv("MEGALLM_API_KEY")
-        self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
             temperature=0,
-            openai_api_key=megallm_api_key,
-            openai_api_base="https://ai.megallm.io/v1"
+            google_api_key=google_api_key
         )
         self.results_dir = Path("evaluation_results")
         self.results_dir.mkdir(exist_ok=True)

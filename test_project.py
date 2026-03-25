@@ -43,9 +43,9 @@ def test_query(rag):
         print("❌ Skipping - indexing failed")
         return
     
-    api_key = os.getenv("MEGALLM_API_KEY")
-    if not api_key or api_key == "your_megallm_api_key_here":
-        print("⚠️  WARNING: MEGALLM_API_KEY not set or is placeholder")
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key or api_key == "your_google_api_key_here":
+        print("⚠️  WARNING: GOOGLE_API_KEY not set or is placeholder")
         print("   The system can index content but cannot answer queries without API key")
         print("   For interview demo, you can:")
         print("   1. Show that indexing works (✅ above)")
@@ -91,8 +91,8 @@ def main():
     if rag:
         print("✅ Content indexing: WORKING")
         print("✅ Vector store: CREATED")
-        api_key = os.getenv("MEGALLM_API_KEY")
-        if api_key and api_key != "your_megallm_api_key_here":
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if api_key and api_key != "your_google_api_key_here":
             print("✅ API Key: CONFIGURED")
         else:
             print("⚠️  API Key: NEEDS VALID KEY FOR QUERIES")

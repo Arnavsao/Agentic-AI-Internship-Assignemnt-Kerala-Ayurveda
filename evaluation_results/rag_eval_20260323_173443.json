@@ -1,0 +1,100 @@
+{
+  "timestamp": "2026-03-23T17:34:43.464568",
+  "total_examples": 5,
+  "avg_coverage_score": 0.6,
+  "avg_citation_accuracy": 1.0,
+  "hallucination_rate": 0.8,
+  "tone_compliance_rate": 0.6,
+  "detailed_results": [
+    {
+      "example_id": "q001",
+      "query": "What are the benefits of Ashwagandha for stress?",
+      "answer": "In Ayurveda, Ashwagandha is traditionally used to support the body\u2019s ability to adapt to stress [Source 1, Source 2, Source 3]. It may also help to promote calmness and emotional balance [Source 1, Source 2, Source 3].\n\nOur approach emphasizes Ashwagandha as offering daily support for stress resilience [Source 1, Source 2, Source 3]. It's important to note that Ashwagandha is not intended to cure conditions like anxiety [Source 1, Source 2, Source 3].\n\nFor personalized guidance on managing stress and to understand how Ashwagandha might best support your individual needs, we always recommend consulting with a qualified Ayurvedic practitioner.",
+      "citations": [
+        "product_ashwagandha_tablets_internal",
+        "product_ashwagandha_tablets_internal",
+        "product_ashwagandha_tablets_internal"
+      ],
+      "coverage_score": 0.75,
+      "citation_accuracy": 1.0,
+      "hallucination_detected": true,
+      "tone_appropriate": false,
+      "human_usefulness": null,
+      "human_safety": null,
+      "human_notes": "",
+      "timestamp": "2026-03-23T17:34:01.008626"
+    },
+    {
+      "example_id": "q002",
+      "query": "Are there any contraindications for Triphala?",
+      "answer": "While Triphala is traditionally used to support well-being, certain individuals should exercise caution. It is recommended that individuals with chronic digestive disease, those who have had recent abdominal surgery, or those who are pregnant or breastfeeding consult a qualified healthcare provider before using Triphala [Source 1, Source 2, Source 3].\n\nPlease remember that Triphala is not intended to diagnose, treat, cure, or prevent any disease [Source 1, Source 2, Source 3]. Always consult with a qualified practitioner for personalized guidance.",
+      "citations": [
+        "product_triphala_capsules_internal",
+        "product_triphala_capsules_internal",
+        "product_triphala_capsules_internal"
+      ],
+      "coverage_score": 0.75,
+      "citation_accuracy": 1.0,
+      "hallucination_detected": true,
+      "tone_appropriate": false,
+      "human_usefulness": null,
+      "human_safety": null,
+      "human_notes": "",
+      "timestamp": "2026-03-23T17:34:06.766652"
+    },
+    {
+      "example_id": "q003",
+      "query": "Can Ayurveda help with stress and sleep?",
+      "answer": "Yes, Ayurveda offers a holistic approach to supporting well-being related to stress and sleep [Source 1, Source 2, Source 3].\n\nIt traditionally addresses these areas through several practices:\n*   **Daily routines:** Such as maintaining consistent sleep\u2013wake timing [Source 1, Source 2, Source 3].\n*   **Food choices:** Emphasizing options that feel grounding [Source 1, Source 2, Source 3].\n*   **Herbs:** Utilizing herbs like Ashwagandha, which is traditionally used to support the body\u2019s stress response [Source 1, Source 2, Source 3].\n*   **Therapies:** Including practices such as oil massages and head oil applications [Source 1, Source 2, Source 3].\n\nFor personalized guidance on how these approaches might best support your unique needs, it is always beneficial to consult with a qualified Ayurvedic practitioner.",
+      "citations": [
+        "faq_general_ayurveda_patients",
+        "faq_general_ayurveda_patients",
+        "faq_general_ayurveda_patients"
+      ],
+      "coverage_score": 0.5,
+      "citation_accuracy": 1.0,
+      "hallucination_detected": false,
+      "tone_appropriate": true,
+      "human_usefulness": null,
+      "human_safety": null,
+      "human_notes": "",
+      "timestamp": "2026-03-23T17:34:21.797934"
+    },
+    {
+      "example_id": "q004",
+      "query": "What is Vata dosha?",
+      "answer": "Vata dosha is characterized by qualities such as light, dry, mobile, and cold [Source 1, 2, 3].\n\nWhen Vata is reasonably balanced, individuals may experience tendencies like creativity and quick thinking. They often enjoy variety, movement, and travel, and tend to be fast to start new endeavors, though sometimes slow to finish them [Source 1, 2, 3].\n\nHowever, an imbalance in Vata may manifest as restlessness, worry, or scattered focus. Other signs can include irregular appetite or digestion, sleep disturbances (such as difficulty falling or staying asleep), a feeling of coldness, and dryness in the skin or hair [Source 1, 2, 3].\n\nTo support Vata balance, it is traditionally recommended to emphasize warmth, regularity, and grounding in daily routines and food choices. These approaches are considered soothing for a Vata-dominant constitution and are often referred to as \"Vata-calming\" [Source 1, 2, 3].\n\nFor personalized guidance on maintaining your unique balance, it is always beneficial to consult with a qualified Ayurvedic practitioner.",
+      "citations": [
+        "dosha_guide_vata_pitta_kapha",
+        "dosha_guide_vata_pitta_kapha",
+        "dosha_guide_vata_pitta_kapha"
+      ],
+      "coverage_score": 1.0,
+      "citation_accuracy": 1.0,
+      "hallucination_detected": true,
+      "tone_appropriate": true,
+      "human_usefulness": null,
+      "human_safety": null,
+      "human_notes": "",
+      "timestamp": "2026-03-23T17:34:30.622561"
+    },
+    {
+      "example_id": "q005",
+      "query": "How does the Stress Support Program work at Kerala Ayurveda clinics?",
+      "answer": "The Stress Support Program at Kerala Ayurveda clinics is designed to offer support for individuals experiencing ongoing stress, mental fatigue, and difficulty unwinding [Source 1, Source 2, Source 3].\n\nIt is important to understand that this program is a supportive, complementary Ayurvedic program and is not intended as a psychiatric or emergency mental health service [Source 1, Source 2, Source 3].\n\nFor personalized guidance and to determine if this program is suitable for your unique needs, we always recommend consulting with a qualified Ayurvedic practitioner.",
+      "citations": [
+        "treatment_stress_support_program",
+        "treatment_stress_support_program",
+        "treatment_stress_support_program"
+      ],
+      "coverage_score": 0.0,
+      "citation_accuracy": 1.0,
+      "hallucination_detected": true,
+      "tone_appropriate": true,
+      "human_usefulness": null,
+      "human_safety": null,
+      "human_notes": "",
+      "timestamp": "2026-03-23T17:34:43.464516"
+    }
+  ]
+}

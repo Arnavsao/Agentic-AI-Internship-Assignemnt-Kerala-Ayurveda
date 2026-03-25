@@ -1,0 +1,77 @@
+[
+  {
+    "id": "q001",
+    "query": "What are the benefits of Ashwagandha for stress?",
+    "expected_answer_contains": [
+      "adapt to stress",
+      "emotional balance",
+      "restful sleep",
+      "traditionally used"
+    ],
+    "expected_sources": [
+      "product_ashwagandha_tablets_internal"
+    ],
+    "category": "product",
+    "notes": "Should mention stress resilience without claiming to cure anxiety"
+  },
+  {
+    "id": "q002",
+    "query": "Are there any contraindications for Triphala?",
+    "expected_answer_contains": [
+      "chronic digestive disease",
+      "pregnancy",
+      "consult",
+      "healthcare provider"
+    ],
+    "expected_sources": [
+      "product_triphala_capsules_internal"
+    ],
+    "category": "product",
+    "notes": "Must include safety warnings"
+  },
+  {
+    "id": "q003",
+    "query": "Can Ayurveda help with stress and sleep?",
+    "expected_answer_contains": [
+      "daily routines",
+      "herbs",
+      "not replace",
+      "complement"
+    ],
+    "expected_sources": [
+      "faq_general_ayurveda_patients"
+    ],
+    "category": "faq",
+    "notes": "Should be balanced - helps but doesn't replace medical care"
+  },
+  {
+    "id": "q004",
+    "query": "What is Vata dosha?",
+    "expected_answer_contains": [
+      "movement",
+      "light",
+      "dry",
+      "tendencies"
+    ],
+    "expected_sources": [
+      "dosha_guide_vata_pitta_kapha"
+    ],
+    "category": "concept",
+    "notes": "Should avoid rigid labels, emphasize patterns"
+  },
+  {
+    "id": "q005",
+    "query": "How does the Stress Support Program work at Kerala Ayurveda clinics?",
+    "expected_answer_contains": [
+      "consultation",
+      "Abhyanga",
+      "Shirodhara",
+      "not a substitute"
+    ],
+    "expected_sources": [
+      "treatment_stress_support_program"
+    ],
+    "category": "treatment",
+    "notes": "Must clarify this is complementary, not psychiatric treatment"
+  }
+]

@@ -3,14 +3,17 @@ Kerala Ayurveda Agentic Workflow - Part B Implementation
 Multi-agent system for article generation with fact-checking and style validation
 """
 
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 import json
 from datetime import datetime
 
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from src.rag_system import AyurvedaRAGSystem
 
@@ -99,12 +102,11 @@ class OutlineAgent:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        megallm_api_key = os.getenv("MEGALLM_API_KEY")
-        self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
             temperature=0.3,
-            openai_api_key=megallm_api_key,
-            openai_api_base="https://ai.megallm.io/v1"
+            google_api_key=google_api_key
         )
 
     def generate_outline(self, brief: ArticleBrief) -> Outline:
@@ -190,12 +192,11 @@ class WriterAgent:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        megallm_api_key = os.getenv("MEGALLM_API_KEY")
-        self.llm = ChatOpenAI(
-            model="gpt-4o",
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
             temperature=0.2,
-            openai_api_key=megallm_api_key,
-            openai_api_base="https://ai.megallm.io/v1"
+            google_api_key=google_api_key
         )
 
     def write_draft(self, brief: ArticleBrief, outline: Outline) -> Draft:
@@ -311,12 +312,11 @@ class FactCheckerAgent:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        megallm_api_key = os.getenv("MEGALLM_API_KEY")
-        self.llm = ChatOpenAI(
-            model="gpt-4o",
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
             temperature=0,
-            openai_api_key=megallm_api_key,
-            openai_api_base="https://ai.megallm.io/v1"
+            google_api_key=google_api_key
         )
 
     def fact_check(self, draft: Draft) -> FactCheckResult:
@@ -395,12 +395,11 @@ class ToneEditorAgent:
 
     def __init__(self, rag_system: AyurvedaRAGSystem):
         self.rag = rag_system
-        megallm_api_key = os.getenv("MEGALLM_API_KEY")
-        self.llm = ChatOpenAI(
-            model="gpt-4o",
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
             temperature=0.2,
-            openai_api_key=megallm_api_key,
-            openai_api_base="https://ai.megallm.io/v1"
+            google_api_key=google_api_key
         )
 
         # Load style guide from corpus
@@ -578,7 +577,7 @@ class ArticleWorkflowOrchestrator:
             citations=[
                 {"doc_id": c.doc_id, "section_id": c.section_id}
                 for c in draft.citations[:10]  # Deduplicate and limit
-            ] if hasattr(draft.citations[0], 'doc_id') else draft.citations,
+            ] if draft.citations and hasattr(draft.citations[0], 'doc_id') else draft.citations,
             fact_check_score=fact_check_result.grounding_score,
             style_score=tone_result.style_score,
             workflow_metadata=workflow_metadata,
