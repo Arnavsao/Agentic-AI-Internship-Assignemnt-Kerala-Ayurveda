@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import pandas as pd
 from pathlib import Path
 import re
+import pypdf
 
 # LangChain imports
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -86,7 +87,22 @@ class AyurvedaRAGSystem:
             return 'product'
         elif 'guide' in filename.lower() or 'dosha' in filename.lower():
             return 'guide'
+        elif 'pdf' in filename.lower():
+            return 'guide'  # PDFs are long-form content — use larger chunks
         return 'default'
+
+    def load_pdf_document(self, pdf_path: Path) -> str:
+        """
+        Extract full text from a PDF using pypdf.
+        Joins all pages with double newlines for clean paragraph separation.
+        """
+        reader = pypdf.PdfReader(str(pdf_path))
+        pages_text = []
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if text and text.strip():
+                pages_text.append(f"[Page {i + 1}]\n{text.strip()}")
+        return "\n\n".join(pages_text)
 
     def chunk_document(self, content: str, doc_id: str, doc_type: str) -> List[Document]:
         """
@@ -136,6 +152,7 @@ class AyurvedaRAGSystem:
 
         Handles:
         - Markdown files (.md)
+        - PDF documents (.pdf)
         - CSV product catalog
         """
         print("Loading and indexing content...")
@@ -152,6 +169,22 @@ class AyurvedaRAGSystem:
             chunks = self.chunk_document(content, doc_id, doc_type)
             self.documents.extend(chunks)
             print(f"  Loaded {md_file.name}: {len(chunks)} chunks ({doc_type} type)")
+
+        # Load PDF files
+        pdf_files = list(self.content_dir.glob("*.pdf"))
+        for pdf_file in pdf_files:
+            doc_id = pdf_file.stem
+            doc_type = 'guide'  # PDFs are long-form — use 800-char chunks
+            try:
+                content = self.load_pdf_document(pdf_file)
+                if content.strip():
+                    chunks = self.chunk_document(content, doc_id, doc_type)
+                    self.documents.extend(chunks)
+                    print(f"  Loaded {pdf_file.name}: {len(chunks)} chunks (pdf/guide type)")
+                else:
+                    print(f"  WARNING: {pdf_file.name} produced no extractable text (may be scanned image PDF)")
+            except Exception as e:
+                print(f"  ERROR loading {pdf_file.name}: {e}")
 
         # Load CSV product catalog
         csv_file = self.content_dir / "products_catalog.csv"
