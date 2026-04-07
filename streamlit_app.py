@@ -22,7 +22,7 @@ st.set_page_config(
 # Sidebar
 with st.sidebar:
     st.title("Kerala Ayurveda AI")
-    st.markdown("*Agentic AI Internship Assignment*")
+    st.markdown("*Agentic AI*")
     st.divider()
 
     st.header("Knowledge Base")
@@ -59,6 +59,11 @@ with st.sidebar:
     st.divider()
     st.caption("Stack: Google Gemini 2.5 Flash · ChromaDB · LangChain · HuggingFace Embeddings")
 
+    st.divider()
+    if st.button("Clear Cache & Reload", use_container_width=True):
+        st.cache_resource.clear()
+        st.rerun()
+
 # API Key check
 if not os.getenv("GOOGLE_API_KEY") and not os.getenv("GOOGLE_API_KEY_1"):
     st.error("GOOGLE_API_KEY not configured. Please add it in .env file.")
@@ -72,6 +77,22 @@ def load_rag_system():
         rag.load_and_index_content()
         return rag, None
     except Exception as e:
+        error_str = str(e).lower()
+        # Auto-recover from stale/locked ChromaDB files
+        if "unable to open database" in error_str or "database error" in error_str:
+            import shutil
+            chroma_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "chroma_db"
+            )
+            if os.path.exists(chroma_path):
+                shutil.rmtree(chroma_path)
+            try:
+                rag = AyurvedaRAGSystem()
+                rag.load_and_index_content()
+                return rag, None
+            except Exception as e2:
+                import traceback
+                return None, traceback.format_exc()
         import traceback
         return None, traceback.format_exc()
 

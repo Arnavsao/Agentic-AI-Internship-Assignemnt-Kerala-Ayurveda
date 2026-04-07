@@ -10,6 +10,7 @@ import pandas as pd
 from pathlib import Path
 import re
 import pypdf
+import chromadb
 
 # LangChain imports
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -145,12 +146,36 @@ class AyurvedaRAGSystem:
         """
         Load all content files and build vector index.
 
+        On subsequent startups, reuses the persisted ChromaDB index to avoid
+        re-embedding all documents (which was causing the Streamlit endless reload).
+        Only rebuilds from scratch if the collection is empty or missing.
+
         Handles:
         - Markdown files (.md)
         - PDF documents (.pdf)
         - CSV product catalog
         """
-        print("Loading and indexing content...")
+        persist_path = str(Path(self.persist_dir).resolve())
+        Path(persist_path).mkdir(parents=True, exist_ok=True)
+        chroma_client = chromadb.PersistentClient(path=persist_path)
+
+        # ── Fast path: reuse existing persisted index ──────────────────────
+        try:
+            existing = chroma_client.get_collection("ayurveda_rag")
+            count = existing.count()
+            if count > 0:
+                print(f"Reusing persisted ChromaDB index ({count} chunks already indexed).")
+                self.vectorstore = Chroma(
+                    client=chroma_client,
+                    collection_name="ayurveda_rag",
+                    embedding_function=self.embeddings,
+                )
+                return
+        except Exception:
+            pass  # Collection doesn't exist yet — fall through to full build
+
+        # ── Slow path: build from scratch (first run only) ─────────────────
+        print("Building vector index for the first time — this takes ~30s...")
 
         # Load markdown files
         md_files = list(self.content_dir.glob("*.md"))
@@ -186,7 +211,6 @@ class AyurvedaRAGSystem:
         if csv_file.exists():
             df = pd.read_csv(csv_file)
             for _, row in df.iterrows():
-                # Create rich text representation of product
                 product_text = f"""
 Product: {row['name']} (ID: {row['product_id']})
 Category: {row['category']}
@@ -209,14 +233,14 @@ Tags: {row['internal_tags']}
 
             print(f"  Loaded products_catalog.csv: {len(df)} products")
 
-        # Build vector store
-        print(f"\nBuilding vector index with {len(self.documents)} total chunks...")
+        print(f"\nEmbedding and indexing {len(self.documents)} total chunks...")
         self.vectorstore = Chroma.from_documents(
             documents=self.documents,
             embedding=self.embeddings,
-            persist_directory=self.persist_dir
+            client=chroma_client,
+            collection_name="ayurveda_rag"
         )
-        print("Index built successfully!")
+        print("Index built and persisted successfully!")
 
     def retrieve_relevant_chunks(self, query: str, k: int = 5) -> List[Tuple[Document, float]]:
         """
