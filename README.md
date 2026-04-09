@@ -11,6 +11,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)
 ![LangChain](https://img.shields.io/badge/LangChain-0.1%2B-green?logo=chainlink)
+![MegaLLM](https://img.shields.io/badge/MegaLLM-gemini--3--pro--preview-blueviolet)
 ![Gemini](https://img.shields.io/badge/Google%20Gemini-2.5%20Flash-orange?logo=google)
 ![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector%20DB-purple)
 ![Streamlit](https://img.shields.io/badge/Streamlit-UI-red?logo=streamlit)
@@ -54,47 +55,68 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 ## 🏗️ System Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                   KERALA AYURVEDA RAG SYSTEM                      │
-│                                                                   │
-│  ┌──────────────────────────────────────┐                         │
-│  │           DATA LAYER                 │                         │
-│  │  8 Markdown docs + 1 CSV catalog     │                         │
-│  │  → 57 adaptive chunks in ChromaDB    │                         │
-│  └──────────────────┬───────────────────┘                         │
-│                     │                                             │
-│                     ▼                                             │
-│  ┌──────────────────────────────────────┐                         │
-│  │         PART A — RAG SYSTEM          │                         │
-│  │                                      │                         │
-│  │  User Query                          │                         │
-│  │     → Semantic Search (ChromaDB)     │                         │
-│  │     → Top-5 retrieved, Top-3 used    │                         │
-│  │     → Gemini 2.5 Flash generation    │                         │
-│  │     → Structured citations returned  │                         │
-│  └──────────────────┬───────────────────┘                         │
-│                     │                                             │
-│                     ▼                                             │
-│  ┌──────────────────────────────────────┐                         │
-│  │      PART B — MULTI-AGENT WORKFLOW   │                         │
-│  │                                      │                         │
-│  │  Article Brief                       │                         │
-│  │    → [1] Outline Agent               │                         │
-│  │    → [2] Writer Agent                │                         │
-│  │    → [3] Fact-Checker Agent          │                         │
-│  │    → [4] Tone Editor Agent           │                         │
-│  │    → Final Article (ready for editor)│                         │
-│  └──────────────────┬───────────────────┘                         │
-│                     │                                             │
-│                     ▼                                             │
-│  ┌──────────────────────────────────────┐                         │
-│  │       EVALUATION FRAMEWORK           │                         │
-│  │  • 5-example golden set              │                         │
-│  │  • Metrics: Coverage, Citations,     │                         │
-│  │    Hallucination Rate, Tone          │                         │
-│  │  • Results persisted to JSONL        │                         │
-│  └──────────────────────────────────────┘                         │
-└───────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                    KERALA AYURVEDA RAG SYSTEM                        │
+│                                                                      │
+│  ┌───────────────────────────────────────────┐                       │
+│  │              LLM PROVIDER LAYER           │                       │
+│  │                                           │                       │
+│  │   ┌─────────────────────────────────┐     │                       │
+│  │   │  PRIMARY: MegaLLM               │     │                       │
+│  │   │  model: gemini-3-pro-preview     │     │                       │
+│  │   │  base:  https://ai.megallm.io/v1│     │                       │
+│  │   └────────────────┬────────────────┘     │                       │
+│  │                    │ fails?                │                       │
+│  │                    ▼                       │                       │
+│  │   ┌─────────────────────────────────┐     │                       │
+│  │   │  FALLBACK: Google Gemini        │     │                       │
+│  │   │  model: gemini-2.5-flash        │     │                       │
+│  │   │  keys: auto-rotated (3 keys)    │     │                       │
+│  │   └─────────────────────────────────┘     │                       │
+│  │         Managed by GeminiKeyManager        │                       │
+│  └───────────────────────────────────────────┘                       │
+│                          │                                           │
+│                          ▼                                           │
+│  ┌───────────────────────────────────────────┐                       │
+│  │              DATA LAYER                   │                       │
+│  │  8 Markdown docs + 1 CSV catalog          │                       │
+│  │  → Adaptive chunking (400–800 chars)      │                       │
+│  │  → HuggingFace all-MiniLM-L6-v2 embeddings│                       │
+│  │  → 57+ chunks persisted in ChromaDB       │                       │
+│  └───────────────────┬───────────────────────┘                       │
+│                      │                                               │
+│                      ▼                                               │
+│  ┌───────────────────────────────────────────┐                       │
+│  │           PART A — RAG SYSTEM             │                       │
+│  │                                           │                       │
+│  │  User Query                               │                       │
+│  │     → Semantic Search (ChromaDB)          │                       │
+│  │     → Top-5 retrieved, Top-3 used         │                       │
+│  │     → LLM generation (MegaLLM → Gemini)   │                       │
+│  │     → Structured citations returned       │                       │
+│  └───────────────────┬───────────────────────┘                       │
+│                      │                                               │
+│                      ▼                                               │
+│  ┌───────────────────────────────────────────┐                       │
+│  │       PART B — MULTI-AGENT WORKFLOW       │                       │
+│  │                                           │                       │
+│  │  Article Brief                            │                       │
+│  │    → [1] Outline Agent   (temp 0.3)       │                       │
+│  │    → [2] Writer Agent    (temp 0.2)       │                       │
+│  │    → [3] Fact-Checker    (temp 0.0)       │                       │
+│  │    → [4] Tone Editor     (temp 0.2)       │                       │
+│  │    → Final Article  ✓ grounding ≥ 0.7     │                       │
+│  └───────────────────┬───────────────────────┘                       │
+│                      │                                               │
+│                      ▼                                               │
+│  ┌───────────────────────────────────────────┐                       │
+│  │          EVALUATION FRAMEWORK             │                       │
+│  │  • 5-example golden set                   │                       │
+│  │  • Metrics: Coverage, Citations,          │                       │
+│  │    Hallucination Rate, Tone               │                       │
+│  │  • Results persisted to JSONL             │                       │
+│  └───────────────────────────────────────────┘                       │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -103,7 +125,8 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 
 | Layer | Technology | Version | Purpose |
 |-------|-----------|---------|---------|
-| **LLM** | Google Gemini 2.5 Flash | `gemini-2.5-flash` | Q&A generation, fact-checking, tone editing |
+| **LLM (Primary)** | MegaLLM — `gemini-3-pro-preview` | OpenAI-compatible API | Primary LLM provider via `https://ai.megallm.io/v1` |
+| **LLM (Fallback)** | Google Gemini 2.5 Flash | `gemini-2.5-flash` | Fallback with automatic 3-key rotation on quota exhaustion |
 | **Embeddings** | HuggingFace `all-MiniLM-L6-v2` | via `langchain-huggingface` | Local semantic embeddings — no API cost |
 | **Vector DB** | ChromaDB | `≥0.4.0` | Persistent vector store with similarity scores |
 | **Framework** | LangChain | `≥0.1.0` | Chains, prompts, document processing |
@@ -142,7 +165,7 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 ├── demo.py                    # RAG system demo script
 ├── test_project.py            # Project validation tests
 ├── requirements.txt           # Python dependencies
-└── .env                       # API keys (GOOGLE_API_KEY)
+└── .env                       # API keys (MEGA_API_KEY + GOOGLE_API_KEY_1/2/3)
 ```
 
 ---
@@ -160,15 +183,24 @@ source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure API Key
+### 2. Configure API Keys
 
 Create a `.env` file in the project root:
 
 ```env
-GOOGLE_API_KEY=your_google_api_key_here
+# Primary LLM — MegaLLM (gemini-3-pro-preview)
+MEGA_API_KEY=sk-mega-your_megallm_key_here
+
+# Fallback — Google Gemini (auto-rotated on quota exhaustion)
+GOOGLE_API_KEY_1=your_google_api_key_1
+GOOGLE_API_KEY_2=your_google_api_key_2   # optional
+GOOGLE_API_KEY_3=your_google_api_key_3   # optional
 ```
 
-Get your free API key at [Google AI Studio](https://aistudio.google.com/app/apikey).
+- Get a MegaLLM key at [megallm.io](https://megallm.io)
+- Get a free Gemini key at [Google AI Studio](https://aistudio.google.com/app/apikey)
+
+The system tries MegaLLM first; if it fails for any reason it automatically falls back to Gemini.
 
 ### 3. Run the Streamlit App
 
@@ -408,6 +440,6 @@ The Fact-Checker auto-rejects articles below 70% grounding. Medical content has 
 
 **Kerala Ayurveda RAG System** · Built for the Agentic AI Internship Assignment · March 2026
 
-*Stack: Python 3.13 · Google Gemini 2.5 Flash · LangChain · ChromaDB · HuggingFace · Streamlit*
+*Stack: Python 3.13 · MegaLLM (gemini-3-pro-preview) · Google Gemini 2.5 Flash · LangChain · ChromaDB · HuggingFace · Streamlit*
 
 </div>

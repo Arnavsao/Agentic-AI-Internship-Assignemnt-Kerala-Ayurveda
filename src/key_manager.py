@@ -1,12 +1,16 @@
 """
-Gemini API Key Manager with automatic rotation.
+LLM Key Manager with MegaLLM-first strategy and Gemini fallback.
+
+Priority:
+  1. MegaLLM (MEGA_API_KEY) — model: gemini-3-pro-preview
+     Base URL: https://ai.megallm.io/v1 (OpenAI-compatible)
+  2. Gemini (GOOGLE_API_KEY_1, GOOGLE_API_KEY_2, ... or GOOGLE_API_KEY)
+     with automatic key rotation on quota exhaustion
 
 Loads keys from environment variables:
+  MEGA_API_KEY
   GOOGLE_API_KEY_1, GOOGLE_API_KEY_2, GOOGLE_API_KEY_3, ...
   (falls back to GOOGLE_API_KEY if numbered keys not found)
-
-When a key hits a quota/rate-limit error (ResourceExhausted / 429),
-the manager rotates to the next available key transparently.
 """
 
 import os
@@ -16,18 +20,21 @@ from typing import List, Optional, Callable, Any
 
 logger = logging.getLogger(__name__)
 
+MEGA_BASE_URL = "https://ai.megallm.io/v1"
+MEGA_MODEL = "gemini-3-pro-preview"
+
 
 class GeminiKeyManager:
     """
-    Thread-safe Gemini API key pool with automatic rotation on exhaustion.
+    LLM provider manager: tries MegaLLM first, falls back to Gemini.
 
     Usage:
         key_manager = GeminiKeyManager()
         llm = key_manager.create_llm(model="gemini-2.5-flash", temperature=0.1)
-        # Use llm normally — keys rotate automatically on quota errors
+        # Keys and providers rotate automatically on quota errors
     """
 
-    # Google API quota / rate-limit error signals
+    # Quota / rate-limit error signals
     EXHAUSTION_SIGNALS = [
         "resourceexhausted",
         "429",
@@ -38,22 +45,32 @@ class GeminiKeyManager:
     ]
 
     def __init__(self):
-        self.keys: List[str] = self._load_keys()
-        self._index: int = 0
+        self._mega_key: Optional[str] = self._load_mega_key()
+        self._gemini_keys: List[str] = self._load_gemini_keys()
+        self._gemini_index: int = 0
 
-        if not self.keys:
+        if not self._mega_key and not self._gemini_keys:
             raise EnvironmentError(
-                "No Gemini API keys found. Set GOOGLE_API_KEY or "
+                "No API keys found. Set MEGA_API_KEY or GOOGLE_API_KEY / "
                 "GOOGLE_API_KEY_1, GOOGLE_API_KEY_2, ... in your .env file."
             )
 
-        logger.info(f"GeminiKeyManager: loaded {len(self.keys)} key(s)")
+        if self._mega_key:
+            logger.info("GeminiKeyManager: MegaLLM key loaded (primary provider)")
+        logger.info(
+            f"GeminiKeyManager: {len(self._gemini_keys)} Gemini key(s) loaded (fallback)"
+        )
 
-    def _load_keys(self) -> List[str]:
-        """Load all available API keys from environment variables."""
+    # ------------------------------------------------------------------
+    # Key loading
+    # ------------------------------------------------------------------
+
+    def _load_mega_key(self) -> Optional[str]:
+        key = os.getenv("MEGA_API_KEY")
+        return key.strip() if key else None
+
+    def _load_gemini_keys(self) -> List[str]:
         keys = []
-
-        # Try numbered keys first: GOOGLE_API_KEY_1, GOOGLE_API_KEY_2, ...
         i = 1
         while True:
             key = os.getenv(f"GOOGLE_API_KEY_{i}")
@@ -61,40 +78,77 @@ class GeminiKeyManager:
                 break
             keys.append(key.strip())
             i += 1
-
-        # Fallback to plain GOOGLE_API_KEY
         if not keys:
             key = os.getenv("GOOGLE_API_KEY")
             if key:
                 keys.append(key.strip())
-
         return keys
+
+    # ------------------------------------------------------------------
+    # Current Gemini key helpers
+    # ------------------------------------------------------------------
 
     @property
     def current_key(self) -> str:
-        """Return the currently active API key."""
-        return self.keys[self._index]
+        """Return the currently active Gemini API key."""
+        if not self._gemini_keys:
+            raise RuntimeError("No Gemini API keys available.")
+        return self._gemini_keys[self._gemini_index]
 
     def rotate(self) -> Optional[str]:
-        """
-        Rotate to the next key in the pool.
-        Returns the new key, or None if all keys are exhausted.
-        """
-        next_index = (self._index + 1) % len(self.keys)
-        if next_index == self._index:
-            return None  # Only one key, can't rotate further
-        self._index = next_index
-        new_key = self.keys[self._index]
+        """Rotate to the next Gemini key. Returns new key or None if only one."""
+        if len(self._gemini_keys) <= 1:
+            return None
+        next_index = (self._gemini_index + 1) % len(self._gemini_keys)
+        if next_index == self._gemini_index:
+            return None
+        self._gemini_index = next_index
+        new_key = self._gemini_keys[self._gemini_index]
         logger.warning(
-            f"Rotated to API key {self._index + 1}/{len(self.keys)} "
+            f"Rotated to Gemini key {self._gemini_index + 1}/{len(self._gemini_keys)} "
             f"(ends ...{new_key[-6:]})"
         )
         return new_key
 
     def is_exhaustion_error(self, error: Exception) -> bool:
-        """Check whether an exception is a quota/rate-limit error."""
         error_str = str(error).lower()
         return any(signal in error_str for signal in self.EXHAUSTION_SIGNALS)
+
+    # ------------------------------------------------------------------
+    # LLM factories
+    # ------------------------------------------------------------------
+
+    def _create_mega_llm(self, **kwargs):
+        """Create an OpenAI-compatible ChatOpenAI pointed at MegaLLM."""
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=MEGA_MODEL,
+            api_key=self._mega_key,
+            base_url=MEGA_BASE_URL,
+            **kwargs,
+        )
+
+    def _create_gemini_llm(self, api_key: str, model: str = "gemini-2.5-flash", **kwargs):
+        """Create a Gemini LLM with the given key."""
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=api_key,
+            **kwargs,
+        )
+
+    def create_llm(self, model: str = "gemini-2.5-flash", **kwargs):
+        """
+        Return the primary LLM: MegaLLM if available, else Gemini.
+        Used for simple one-shot calls; use invoke_with_rotation for resilience.
+        """
+        if self._mega_key:
+            return self._create_mega_llm(**kwargs)
+        return self._create_gemini_llm(self.current_key, model=model, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Resilient invocation
+    # ------------------------------------------------------------------
 
     def invoke_with_rotation(
         self,
@@ -104,31 +158,45 @@ class GeminiKeyManager:
         retry_delay: float = 2.0,
     ) -> Any:
         """
-        Invoke an LLM call with automatic key rotation on exhaustion.
+        Invoke with MegaLLM first, then fall back to Gemini key rotation.
+
+        The create_llm_fn / invoke_fn signature is kept for backwards
+        compatibility — they are used only for the Gemini fallback path.
 
         Args:
-            create_llm_fn: callable(api_key) -> LLM instance
+            create_llm_fn: callable(api_key) -> Gemini LLM (fallback)
             invoke_fn:      callable(llm) -> result
-            max_retries:    how many keys to try (default: all keys)
-            retry_delay:    seconds to wait before retry
-
-        Returns:
-            The result from invoke_fn on the first successful key.
-
-        Raises:
-            The last exception if all keys are exhausted.
+            max_retries:    Gemini keys to try after MegaLLM fails
+            retry_delay:    seconds to wait before each retry
         """
+        # --- Try MegaLLM first ---
+        if self._mega_key:
+            try:
+                mega_llm = self._create_mega_llm()
+                result = invoke_fn(mega_llm)
+                logger.debug("MegaLLM call succeeded.")
+                return result
+            except Exception as e:
+                logger.warning(
+                    f"MegaLLM failed ({e}). Falling back to Gemini keys..."
+                )
+
+        # --- Fall back to Gemini with key rotation ---
+        if not self._gemini_keys:
+            raise RuntimeError(
+                "MegaLLM failed and no Gemini keys are configured as fallback."
+            )
+
         if max_retries is None:
-            max_retries = len(self.keys)
+            max_retries = len(self._gemini_keys)
 
         last_error = None
-        keys_tried = set()
+        keys_tried: set = set()
 
         for attempt in range(max_retries):
             key = self.current_key
 
             if key in keys_tried:
-                # We've looped around — all keys exhausted
                 break
             keys_tried.add(key)
 
@@ -139,7 +207,7 @@ class GeminiKeyManager:
             except Exception as e:
                 if self.is_exhaustion_error(e):
                     logger.warning(
-                        f"Key {self._index + 1} exhausted: {e}. "
+                        f"Gemini key {self._gemini_index + 1} exhausted: {e}. "
                         f"Rotating to next key..."
                     )
                     last_error = e
@@ -149,29 +217,21 @@ class GeminiKeyManager:
                     if retry_delay > 0:
                         time.sleep(retry_delay)
                 else:
-                    raise  # Non-quota errors propagate immediately
+                    raise
 
         raise RuntimeError(
-            f"All {len(self.keys)} Gemini API key(s) exhausted or failed. "
+            f"MegaLLM and all {len(self._gemini_keys)} Gemini key(s) failed. "
             f"Last error: {last_error}"
         ) from last_error
 
-    def create_llm(self, model: str = "gemini-2.5-flash", **kwargs):
-        """
-        Create a ChatGoogleGenerativeAI instance with the current key.
-        Re-call this after rotation to get an LLM with the new key.
-        """
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(
-            model=model,
-            google_api_key=self.current_key,
-            **kwargs
-        )
-
     def status(self) -> dict:
-        """Return current key pool status for display."""
+        """Return current provider/key status for display."""
         return {
-            "total_keys": len(self.keys),
-            "active_key_index": self._index + 1,
-            "active_key_suffix": f"...{self.current_key[-6:]}",
+            "mega_available": self._mega_key is not None,
+            "mega_model": MEGA_MODEL if self._mega_key else None,
+            "gemini_total_keys": len(self._gemini_keys),
+            "gemini_active_key_index": self._gemini_index + 1 if self._gemini_keys else 0,
+            "gemini_active_key_suffix": (
+                f"...{self.current_key[-6:]}" if self._gemini_keys else "N/A"
+            ),
         }
