@@ -226,11 +226,17 @@ class GeminiKeyManager:
 
     def status(self) -> dict:
         """Return current provider/key status for display."""
+        total = len(self._gemini_keys) + (1 if self._mega_key else 0)
+        active_index = self._gemini_index + 1 if self._gemini_keys else 0
         return {
+            # Keys expected by streamlit_app.py sidebar
+            "total_keys": total,
+            "active_key_index": active_index,
+            # Extended info
             "mega_available": self._mega_key is not None,
             "mega_model": MEGA_MODEL if self._mega_key else None,
             "gemini_total_keys": len(self._gemini_keys),
-            "gemini_active_key_index": self._gemini_index + 1 if self._gemini_keys else 0,
+            "gemini_active_key_index": active_index,
             "gemini_active_key_suffix": (
                 f"...{self.current_key[-6:]}" if self._gemini_keys else "N/A"
             ),
