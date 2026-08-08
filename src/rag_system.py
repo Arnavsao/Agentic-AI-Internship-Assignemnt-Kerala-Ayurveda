@@ -3,7 +3,37 @@ Kerala Ayurveda RAG System - Part A Implementation
 Implements document chunking, retrieval, and Q&A with citations
 """
 
+import warnings
+import logging
+import contextlib
+
+# Suppress all deprecation, user, and other runtime warnings globally
+warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", message=".*unauthenticated.*")
+warnings.filterwarnings("ignore", message=".*Chroma.*")
+
+# Try to import and suppress LangChainDeprecationWarning explicitly
+try:
+    from langchain_core._api import LangChainDeprecationWarning
+    warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
+except ImportError:
+    pass
+
 import os
+# Suppress Hugging Face, PyTorch, and tokenizers noisy outputs
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
+# Silence logging of transformers, huggingface_hub and sentence_transformers
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
 import pandas as pd
@@ -58,11 +88,14 @@ class AyurvedaRAGSystem:
         self.key_manager = GeminiKeyManager()
 
         # Local HuggingFace embeddings (no API needed, fast, reliable)
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        # Suppress standard output/error prints during Hugging Face loading
+        with open(os.devnull, 'w') as devnull:
+            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                self.embeddings = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                    model_kwargs={'device': 'cpu'},
+                    encode_kwargs={'normalize_embeddings': True}
+                )
 
         self.vectorstore = None
         self.documents = []

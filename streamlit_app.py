@@ -65,8 +65,8 @@ with st.sidebar:
         st.rerun()
 
 # API Key check
-if not os.getenv("GOOGLE_API_KEY") and not os.getenv("GOOGLE_API_KEY_1"):
-    st.error("GOOGLE_API_KEY not configured. Please add it in .env file.")
+if not os.getenv("MEGA_API_KEY") and not os.getenv("GOOGLE_API_KEY") and not os.getenv("GOOGLE_API_KEY_1"):
+    st.error("No API key configured. Please set MEGA_API_KEY or GOOGLE_API_KEY in .env file.")
     st.stop()
 
 # Shared RAG system (cached)

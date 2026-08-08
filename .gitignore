@@ -10,22 +10,66 @@ ENV/
 *.egg-info/
 dist/
 build/
+*.pyc
 
-# Environment variables
+# Environment variables - NEVER commit API keys!
 .env
+.env.local
+.env.*.local
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
 
 # IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
-# ChromaDB
+# ChromaDB vector store (large binary files, regenerated at runtime)
 chroma_db/
 
 # Logs
 *.log
+logs/
 
 # OS
 .DS_Store
+.DS_Store?
 Thumbs.db
+._*
+.Spotlight-V100
+.Trashes
+
+# Node.js (not needed for Python project)
+node_modules/
+package-lock.json
+package.json
+npm-debug.log*
+
+# Jupyter Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Evaluation outputs (large/generated)
+evaluation_results/
+metrics_history.jsonl
+
+# Temp / scratch files
+*.tmp
+*.bak
+*.orig
+resume_condensed.tex
+
+# Resolved conflict files
+*.resolved
