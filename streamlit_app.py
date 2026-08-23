@@ -5,12 +5,10 @@ Demo interface for the assignment submission
 
 import streamlit as st
 import os
+import sys
 import json
 from dotenv import load_dotenv
 load_dotenv()
-
-from src.rag_system import AyurvedaRAGSystem
-from src.agent_workflow import ArticleWorkflowOrchestrator, ArticleBrief
 
 # Page configuration
 st.set_page_config(
@@ -18,6 +16,31 @@ st.set_page_config(
     page_icon="🌿",
     layout="wide"
 )
+
+# Fail fast on a wrong interpreter. Launching with a Python that lacks the
+# project's deps otherwise manifests as an endless spinner rather than an error.
+_missing = []
+for _mod in ("chromadb", "langchain_huggingface", "langchain_google_genai", "torch"):
+    import importlib.util
+    if importlib.util.find_spec(_mod) is None:
+        _missing.append(_mod)
+if _missing:
+    st.error(
+        f"Missing packages: {', '.join(_missing)}\n\n"
+        f"This interpreter is `{sys.executable}` — it is probably not the project "
+        f"virtualenv. Start the app with:\n\n"
+        "```\n./venv/bin/python -m streamlit run streamlit_app.py\n```"
+    )
+    st.stop()
+
+# Cold-start notice. Held in a placeholder so it can be cleared once loading
+# finishes — a banner that outlives the load reads as a hung app.
+_startup_notice = st.empty()
+if "startup_done" not in st.session_state:
+    _startup_notice.info(
+        "🔄 **First load** — warming up models and embeddings (~15s, longer if the "
+        "vector index must be rebuilt)..."
+    )
 
 # Sidebar
 with st.sidebar:
@@ -49,7 +72,10 @@ with st.sidebar:
     st.header("API Key Pool")
     try:
         from src.key_manager import GeminiKeyManager
-        km = GeminiKeyManager()
+        @st.cache_resource
+        def get_key_manager():
+            return GeminiKeyManager()
+        km = get_key_manager()
         status = km.status()
         st.markdown(f"**{status['total_keys']} key(s) loaded**")
         st.caption(f"Active: key {status['active_key_index']} of {status['total_keys']}")
@@ -57,7 +83,14 @@ with st.sidebar:
         st.warning(f"Key manager: {e}")
 
     st.divider()
-    st.caption("Stack: Google Gemini 2.5 Flash · ChromaDB · LangChain · HuggingFace Embeddings")
+    try:
+        from src.key_manager import DEFAULT_GEMINI_MODEL, MEGA_MODEL
+        _primary = MEGA_MODEL if os.getenv("MEGA_API_KEY") else DEFAULT_GEMINI_MODEL
+        st.caption(
+            f"Stack: {_primary} · ChromaDB · LangChain · HuggingFace Embeddings"
+        )
+    except Exception:
+        st.caption("Stack: ChromaDB · LangChain · HuggingFace Embeddings")
 
     st.divider()
     if st.button("Clear Cache & Reload", use_container_width=True):
@@ -69,9 +102,10 @@ if not os.getenv("MEGA_API_KEY") and not os.getenv("GOOGLE_API_KEY") and not os.
     st.error("No API key configured. Please set MEGA_API_KEY or GOOGLE_API_KEY in .env file.")
     st.stop()
 
-# Shared RAG system (cached)
+# Lazy-load RAG system only when tabs render
 @st.cache_resource(show_spinner=False)
 def load_rag_system():
+    from src.rag_system import AyurvedaRAGSystem
     try:
         rag = AyurvedaRAGSystem()
         rag.load_and_index_content()
@@ -98,6 +132,10 @@ def load_rag_system():
 
 with st.spinner("Loading Kerala Ayurveda knowledge base..."):
     rag, error = load_rag_system()
+
+# Load finished (successfully or not) — retire the cold-start banner.
+_startup_notice.empty()
+st.session_state.startup_done = True
 
 if rag is None:
     st.error("Failed to initialize RAG system.")
@@ -194,6 +232,9 @@ with tab_agent:
     # Article Brief Form
     st.subheader("Article Brief")
 
+    # Lazy-load agent workflow only when used
+    from src.agent_workflow import ArticleWorkflowOrchestrator, ArticleBrief
+
     with st.form("article_brief_form"):
         col1, col2 = st.columns(2)
 
@@ -270,7 +311,11 @@ with tab_agent:
                         col.empty()
 
             try:
-                orchestrator = ArticleWorkflowOrchestrator(rag)
+                @st.cache_resource
+                def get_orchestrator():
+                    return ArticleWorkflowOrchestrator(rag)
+
+                orchestrator = get_orchestrator()
 
                 update_step(0)
                 status_box.info("**Step 1 / 4** — Outline Agent: verifying corpus coverage and building article structure...")
@@ -363,7 +408,7 @@ st.divider()
 st.markdown(
     "<div style='text-align:center;color:gray;font-size:0.85em'>"
     "Kerala Ayurveda AI System · Agentic AI Internship Assignment · March 2026<br>"
-    "Google Gemini 2.5 Flash · LangChain · ChromaDB · HuggingFace · Streamlit"
+    "Gemini · LangChain · ChromaDB · HuggingFace · Streamlit"
     "</div>",
     unsafe_allow_html=True
 )
