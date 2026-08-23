@@ -61,8 +61,10 @@ htmlcov/
 .coverage
 coverage.xml
 
-# Evaluation outputs (large/generated)
-evaluation_results/
+# Evaluation outputs (generated). The benchmark cited by README's Benchmark
+# Report is kept tracked so that claim stays verifiable.
+evaluation_results/*
+!evaluation_results/rag_eval_20260323_173443.json
 metrics_history.jsonl
 
 # Temp / scratch files
@@ -73,3 +75,19 @@ resume_condensed.tex
 
 # Resolved conflict files
 *.resolved
+
+# Database files
+*.db
+*.sqlite3
+
+# User uploads
+uploads/
+
+# Redis data
+redis_data/
+
+# Docker volumes
+docker-data/
+
+# Claude Code local session state
+.claude/
