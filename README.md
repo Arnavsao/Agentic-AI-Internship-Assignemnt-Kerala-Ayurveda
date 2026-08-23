@@ -192,8 +192,8 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/Arnavsao/Agentic-AI-Internship-Assignemnt-Kerala-Ayurveda.git
-cd Agentic-AI-Internship-Assignemnt-Kerala-Ayurveda
+git clone https://github.com/Arnavsao/Agentic-AI-System-Kerala-Ayurveda.git
+cd Agentic-AI-System-Kerala-Ayurveda
 
 python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
