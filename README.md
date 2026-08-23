@@ -12,7 +12,7 @@
 ![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)
 ![LangChain](https://img.shields.io/badge/LangChain-1.2.8-green?logo=chainlink)
 ![MegaLLM](https://img.shields.io/badge/MegaLLM-gemini--3--pro--preview-blueviolet)
-![Gemini](https://img.shields.io/badge/Google%20Gemini-2.5%20Flash-orange?logo=google)
+![Gemini](https://img.shields.io/badge/Google%20Gemini-3.6%20Flash-orange?logo=google)
 ![ChromaDB](https://img.shields.io/badge/ChromaDB-1.4.1-purple)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.54.0-red?logo=streamlit)
 
@@ -71,7 +71,7 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 │  │                    ▼                       │                       │
 │  │   ┌─────────────────────────────────┐     │                       │
 │  │   │  FALLBACK: Google Gemini        │     │                       │
-│  │   │  model: gemini-2.5-flash        │     │                       │
+│  │   │  model: gemini-3.6-flash        │     │                       │
 │  │   │  keys: auto-rotated (3 keys)    │     │                       │
 │  │   └─────────────────────────────────┘     │                       │
 │  │         Managed by GeminiKeyManager        │                       │
@@ -127,7 +127,7 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 | Layer | Technology | Installed Version | Purpose |
 |-------|-----------|---------|---------| 
 | **LLM (Primary)** | MegaLLM — `gemini-3-pro-preview` | OpenAI-compatible API | Primary LLM provider via `https://ai.megallm.io/v1` |
-| **LLM (Fallback)** | Google Gemini 2.5 Flash | `gemini-2.5-flash` | Fallback with automatic 3-key rotation on quota exhaustion |
+| **LLM (Fallback)** | Google Gemini 3.6 Flash | `gemini-3.6-flash` | Fallback with automatic key rotation; override via `GEMINI_MODEL` |
 | **Embeddings** | HuggingFace `all-MiniLM-L6-v2` | `sentence-transformers 5.2.2` | Local semantic embeddings — no API cost |
 | **Vector DB** | ChromaDB | `1.4.1` | Persistent vector store with 264 indexed chunks |
 | **Framework** | LangChain | `1.2.8` | Chains, prompts, document processing |
@@ -157,8 +157,7 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 │   ├── rag_system.py             # Part A — RAG: chunking, retrieval, Q&A with citations
 │   ├── agent_workflow.py         # Part B — 4-agent pipeline for article generation
 │   ├── evaluation.py             # Evaluation framework: golden set, metrics, tracking
-│   ├── key_manager.py            # LLM provider manager: MegaLLM → Gemini key rotation
-│   └── demo_examples.py          # Pre-built demo examples with expected outputs
+│   └── key_manager.py            # LLM provider manager: MegaLLM → Gemini key rotation
 │
 ├── data/                         # Kerala Ayurveda knowledge base (10 documents)
 │   ├── ayurveda_foundations.md
@@ -178,14 +177,12 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 ├── metrics_history.jsonl         # Continuous metrics log
 │
 ├── streamlit_app.py              # Web UI entrypoint
-├── demo.py                       # RAG system demo script
-├── demo_mode.py                  # Offline demo mode (no API keys needed)
+├── run.sh                        # Launcher — pins the venv interpreter
 ├── test_project.py               # Project validation tests
-├── requirements.txt              # Python dependencies (18 packages)
-├── Dockerfile                    # Container build definition
-├── docker-compose.yml            # Docker Compose service config
+├── requirements.txt              # Python dependencies
+├── .streamlit/config.toml        # Streamlit Cloud / local server config
 ├── .env.example                  # Example environment variables
-└── .env                          # API keys (MEGA_API_KEY + GOOGLE_API_KEY_1/2/3)
+└── .env                          # API keys (gitignored — never committed)
 ```
 
 ---
@@ -200,8 +197,12 @@ cd Agentic-AI-Internship-Assignemnt-Kerala-Ayurveda
 
 python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+./venv/bin/python -m pip install -r requirements.txt
 ```
+
+> Invoke pip as `./venv/bin/python -m pip`, not `./venv/bin/pip`. The `pip`
+> shebang hardcodes an absolute path, so it breaks if the project folder is
+> ever moved or renamed.
 
 ### 2. Configure API Keys
 
@@ -228,10 +229,20 @@ The system tries MegaLLM first; if it fails for any reason it automatically fall
 ### 3. Run the Streamlit App
 
 ```bash
-streamlit run streamlit_app.py
+./run.sh
 ```
 
-Open [http://localhost:8501](http://localhost:8501) — the knowledge base loads automatically.
+Open [http://localhost:8501](http://localhost:8501) — the knowledge base loads automatically
+(~15s on a warm ChromaDB index, ~30s longer if it must be rebuilt).
+
+`run.sh` pins the project virtualenv. Avoid a bare `streamlit run streamlit_app.py`:
+that resolves `streamlit` from `PATH`, and if it picks a system Python without this
+project's dependencies the app stalls on startup instead of reporting an error.
+The equivalent explicit command is:
+
+```bash
+./venv/bin/python -m streamlit run streamlit_app.py
+```
 
 ---
 
@@ -247,7 +258,7 @@ User Query
    ↓  Semantic search → retrieve 5 most relevant chunks from 264 indexed
    ↓  Select top 3 for generation (balance relevance vs. context length)
    ↓  Build prompt with [Source X: doc_id - section_id] labels
-   ↓  MegaLLM generates answer (fallback: Gemini 2.5 Flash)
+   ↓  MegaLLM generates answer (fallback: Gemini 3.6 Flash)
    ↓  Return QueryResponse(answer, citations, retrieved_chunks)
 ```
 
@@ -482,16 +493,20 @@ The following benchmark was run against the 5-question golden set on **2026-03-2
 
 ## 🚀 Running the Project
 
+Run every command from the project root. The examples use `./venv/bin/python`
+explicitly so they work whether or not the virtualenv is activated — the modules
+use absolute `from src.… import`, so they must be run as `python -m src.<module>`.
+
 ### Streamlit Web UI (Recommended)
 
 ```bash
-streamlit run streamlit_app.py
+./run.sh
 ```
 
 ### RAG System Demo (Terminal)
 
 ```bash
-python -m src.rag_system
+./venv/bin/python -m src.rag_system
 ```
 
 Runs 3 example queries and prints answers with full citation details.
@@ -499,7 +514,7 @@ Runs 3 example queries and prints answers with full citation details.
 ### Agent Workflow Demo (Terminal)
 
 ```bash
-python -m src.agent_workflow
+./venv/bin/python -m src.agent_workflow
 ```
 
 Runs the full 4-agent pipeline on a sample stress & sleep article brief. Takes ~2-3 minutes.
@@ -507,15 +522,34 @@ Runs the full 4-agent pipeline on a sample stress & sleep article brief. Takes ~
 ### Evaluation Suite
 
 ```bash
-python -m src.evaluation
+./venv/bin/python -m src.evaluation
 ```
 
 Evaluates all 5 golden examples and saves results to `evaluation_results/`.
 
+### Rebuild the Vector Index
+
+```bash
+rm -rf chroma_db
+```
+
+The index is reused on startup when present. Delete it to force a re-embed
+(~30s) after changing anything in `data/`.
+
+### Override the Gemini Model
+
+```bash
+GEMINI_MODEL=gemini-3.5-flash-lite ./run.sh
+```
+
+The Gemini fallback model defaults to `gemini-3.6-flash`. Point `GEMINI_MODEL`
+at a different model to use a separate free-tier quota pool if the default is
+exhausted.
+
 ### Project Tests
 
 ```bash
-python test_project.py
+./venv/bin/python test_project.py
 ```
 
 Validates that all imports, the RAG system, and the evaluation framework load correctly.
@@ -565,6 +599,6 @@ On first run, all documents are embedded and indexed (~30s). On subsequent start
 
 **Kerala Ayurveda RAG System** · Built for the Agentic AI Internship Assignment
 
-*Stack: Python 3.13 · MegaLLM (gemini-3-pro-preview) · Google Gemini 2.5 Flash · LangChain 1.2.8 · ChromaDB 1.4.1 · HuggingFace · Streamlit 1.54.0*
+*Stack: Python 3.13 · MegaLLM (gemini-3-pro-preview) · Google Gemini 3.6 Flash · LangChain 1.2.8 · ChromaDB 1.4.1 · HuggingFace · Streamlit 1.54.0*
 
 </div>
