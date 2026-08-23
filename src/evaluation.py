@@ -22,6 +22,7 @@ import statistics
 from langchain_google_genai import ChatGoogleGenerativeAI
 from src.rag_system import AyurvedaRAGSystem, QueryResponse
 from src.agent_workflow import FinalArticle
+from src.key_manager import DEFAULT_GEMINI_MODEL, response_text
 
 
 @dataclass
@@ -188,7 +189,7 @@ class RAGEvaluator:
         self.rag = rag_system
         google_api_key = os.getenv("GOOGLE_API_KEY")
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model=DEFAULT_GEMINI_MODEL,
             temperature=0,
             google_api_key=google_api_key
         )
@@ -240,7 +241,7 @@ Consider:
 Respond with just: YES (hallucination detected) or NO (answer is grounded)"""
 
         response = self.llm.invoke(prompt)
-        return "YES" in response.content.upper()
+        return "YES" in response_text(response).upper()
 
     def check_tone(self, answer: str) -> bool:
         """Check if answer follows Kerala Ayurveda tone guidelines"""
@@ -329,7 +330,7 @@ class ArticleEvaluator:
     def __init__(self):
         google_api_key = os.getenv("GOOGLE_API_KEY")
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model=DEFAULT_GEMINI_MODEL,
             temperature=0,
             google_api_key=google_api_key
         )

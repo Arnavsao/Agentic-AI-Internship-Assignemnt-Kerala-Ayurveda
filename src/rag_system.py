@@ -49,7 +49,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
-from src.key_manager import GeminiKeyManager
+from src.key_manager import GeminiKeyManager, DEFAULT_GEMINI_MODEL, response_text
 
 
 @dataclass
@@ -347,7 +347,7 @@ Please provide a helpful answer based on the context above. Include [Source X] c
         # Generate answer with automatic key rotation on quota exhaustion
         def create_llm(api_key):
             return ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
+                model=DEFAULT_GEMINI_MODEL,
                 temperature=0.1,
                 google_api_key=api_key
             )
@@ -357,7 +357,7 @@ Please provide a helpful answer based on the context above. Include [Source X] c
             return chain.invoke({"context": context, "query": query})
 
         response = self.key_manager.invoke_with_rotation(create_llm, invoke)
-        answer = response.content
+        answer = response_text(response)
 
         # Build citations
         citations = []

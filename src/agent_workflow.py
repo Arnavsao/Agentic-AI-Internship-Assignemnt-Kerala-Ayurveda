@@ -16,7 +16,7 @@ from datetime import datetime
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from src.rag_system import AyurvedaRAGSystem
-from src.key_manager import GeminiKeyManager
+from src.key_manager import GeminiKeyManager, DEFAULT_GEMINI_MODEL, response_text
 
 
 def _extract_json(text: str) -> dict:
@@ -151,7 +151,7 @@ class OutlineAgent:
     def __init__(self, rag_system: AyurvedaRAGSystem, key_manager: GeminiKeyManager):
         self.rag = rag_system
         self.key_manager = key_manager
-        self._model_kwargs = {"model": "gemini-2.5-flash", "temperature": 0.3}
+        self._model_kwargs = {"model": DEFAULT_GEMINI_MODEL, "temperature": 0.3}
 
     def _create_llm(self, api_key):
         return ChatGoogleGenerativeAI(google_api_key=api_key, **self._model_kwargs)
@@ -212,7 +212,7 @@ Generate the outline as JSON.""")
             lambda llm: (prompt_template | llm).invoke(invoke_input)
         )
 
-        outline_data = _extract_json(response.content)
+        outline_data = _extract_json(response_text(response))
 
         if not outline_data:
             # Fallback: create a minimal outline so the pipeline can continue
@@ -251,7 +251,7 @@ class WriterAgent:
     def __init__(self, rag_system: AyurvedaRAGSystem, key_manager: GeminiKeyManager):
         self.rag = rag_system
         self.key_manager = key_manager
-        self._model_kwargs = {"model": "gemini-2.5-flash", "temperature": 0.2}
+        self._model_kwargs = {"model": DEFAULT_GEMINI_MODEL, "temperature": 0.2}
 
     def _create_llm(self, api_key):
         return ChatGoogleGenerativeAI(google_api_key=api_key, **self._model_kwargs)
@@ -334,7 +334,7 @@ Write the full article with citations.""")
             lambda llm: (prompt_template | llm).invoke(invoke_input)
         )
 
-        content = response.content
+        content = response_text(response)
         word_count = len(content.split())
 
         # Extract citations from content
@@ -374,7 +374,7 @@ class FactCheckerAgent:
     def __init__(self, rag_system: AyurvedaRAGSystem, key_manager: GeminiKeyManager):
         self.rag = rag_system
         self.key_manager = key_manager
-        self._model_kwargs = {"model": "gemini-2.5-flash", "temperature": 0}
+        self._model_kwargs = {"model": DEFAULT_GEMINI_MODEL, "temperature": 0}
 
     def _create_llm(self, api_key):
         return ChatGoogleGenerativeAI(google_api_key=api_key, **self._model_kwargs)
@@ -418,7 +418,7 @@ Analyze the article and return JSON.""")
             lambda llm: (prompt_template | llm).invoke(invoke_input)
         )
 
-        result_data = _extract_json(response.content)
+        result_data = _extract_json(response_text(response))
 
         if not result_data:
             # Fallback: treat as fully grounded if parse fails
@@ -469,7 +469,7 @@ class ToneEditorAgent:
     def __init__(self, rag_system: AyurvedaRAGSystem, key_manager: GeminiKeyManager):
         self.rag = rag_system
         self.key_manager = key_manager
-        self._model_kwargs = {"model": "gemini-2.5-flash", "temperature": 0.2}
+        self._model_kwargs = {"model": DEFAULT_GEMINI_MODEL, "temperature": 0.2}
 
     def _create_llm(self, api_key):
         return ChatGoogleGenerativeAI(google_api_key=api_key, **self._model_kwargs)
@@ -534,7 +534,7 @@ Return JSON analysis.""")
             lambda llm: (prompt_template | llm).invoke(invoke_input)
         )
 
-        result_data = _extract_json(response.content)
+        result_data = _extract_json(response_text(response))
 
         if not result_data:
             result_data = {
