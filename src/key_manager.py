@@ -18,10 +18,50 @@ import time
 import logging
 from typing import List, Optional, Callable, Any
 
+try:
+    # Entry points call load_dotenv() inside main(), which runs after this
+    # module is imported, so load here too for import-time env reads.
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 MEGA_BASE_URL = "https://ai.megallm.io/v1"
 MEGA_MODEL = "gemini-3-pro-preview"
+
+# Gemini fallback model. Override with GEMINI_MODEL in .env.
+# gemini-2.5-flash is no longer served to projects created after its
+# deprecation, so it cannot be the default.
+DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+
+
+def response_text(response: Any) -> str:
+    """
+    Return an LLM response as plain text.
+
+    Gemini 3.x returns .content as a list of typed blocks
+    ([{"type": "text", "text": ...}, ...]) rather than a bare string,
+    so callers that do string work on it need this normalization.
+    """
+    content = getattr(response, "content", response)
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text") or block.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+
+    return "" if content is None else str(content)
 
 
 class GeminiKeyManager:
@@ -42,6 +82,20 @@ class GeminiKeyManager:
         "rate limit",
         "too many requests",
         "resource has been exhausted",
+    ]
+
+    # Errors that condemn one key/project rather than the request itself:
+    # a revoked project, or a model this project may not call. Rotating past
+    # these keeps one dead key from aborting a run that later keys could serve.
+    KEY_UNUSABLE_SIGNALS = [
+        "permission_denied",
+        "403",
+        "not_found",
+        "404",
+        "api key not valid",
+        "invalid api key",
+        "unauthenticated",
+        "401",
     ]
 
     def __init__(self):
@@ -114,6 +168,10 @@ class GeminiKeyManager:
         error_str = str(error).lower()
         return any(signal in error_str for signal in self.EXHAUSTION_SIGNALS)
 
+    def is_key_unusable_error(self, error: Exception) -> bool:
+        error_str = str(error).lower()
+        return any(signal in error_str for signal in self.KEY_UNUSABLE_SIGNALS)
+
     # ------------------------------------------------------------------
     # LLM factories
     # ------------------------------------------------------------------
@@ -128,7 +186,7 @@ class GeminiKeyManager:
             **kwargs,
         )
 
-    def _create_gemini_llm(self, api_key: str, model: str = "gemini-2.5-flash", **kwargs):
+    def _create_gemini_llm(self, api_key: str, model: str = DEFAULT_GEMINI_MODEL, **kwargs):
         """Create a Gemini LLM with the given key."""
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
@@ -137,7 +195,7 @@ class GeminiKeyManager:
             **kwargs,
         )
 
-    def create_llm(self, model: str = "gemini-2.5-flash", **kwargs):
+    def create_llm(self, model: str = DEFAULT_GEMINI_MODEL, **kwargs):
         """
         Return the primary LLM: MegaLLM if available, else Gemini.
         Used for simple one-shot calls; use invoke_with_rotation for resilience.
@@ -205,16 +263,20 @@ class GeminiKeyManager:
                 return invoke_fn(llm)
 
             except Exception as e:
-                if self.is_exhaustion_error(e):
+                exhausted = self.is_exhaustion_error(e)
+                if exhausted or self.is_key_unusable_error(e):
+                    reason = "exhausted" if exhausted else "unusable"
                     logger.warning(
-                        f"Gemini key {self._gemini_index + 1} exhausted: {e}. "
+                        f"Gemini key {self._gemini_index + 1} {reason}: {e}. "
                         f"Rotating to next key..."
                     )
                     last_error = e
                     rotated = self.rotate()
                     if rotated is None:
                         break
-                    if retry_delay > 0:
+                    # An unusable key is a permanent condition, not a
+                    # throttle, so there is nothing to wait out.
+                    if exhausted and retry_delay > 0:
                         time.sleep(retry_delay)
                 else:
                     raise
