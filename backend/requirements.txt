@@ -1,0 +1,54 @@
+# ── Backend Dependencies for Kerala Ayurveda RAG System ──
+#
+# TEACHING POINT — Why pin versions:
+# "langchain>=0.1.0" means "any version above 0.1.0" — next month a breaking
+# change could silently break your app. Pinned versions (langchain==0.3.14)
+# ensure reproducible builds. We use >= for flexibility in dev, but a
+# production deployment should lock versions with pip freeze > requirements.lock
+
+# ── Web Framework ──
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0    # ASGI server (runs FastAPI)
+python-multipart>=0.0.9      # File upload support
+
+# ── Database ──
+sqlalchemy[asyncio]>=2.0.0   # Async ORM
+aiosqlite>=0.20.0            # Async SQLite driver (dev)
+# asyncpg>=0.29.0            # Async PostgreSQL driver (uncomment for production)
+alembic>=1.13.0              # Database migrations
+
+# ── LLM Providers ──
+langchain>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-openai>=0.2.0
+langchain-community>=0.3.0
+langchain-core>=0.3.0
+langchain-text-splitters>=0.3.0
+langchain-huggingface>=0.1.0
+google-generativeai>=0.8.0
+
+# ── Embeddings & Vector Store ──
+chromadb>=0.5.0
+sentence-transformers>=3.0.0  # For embedding models AND cross-encoder reranking
+# Note: sentence-transformers pulls in torch (~2GB). For a leaner deployment,
+# you could use the ONNX runtime version instead.
+
+# ── Document Processing ──
+pypdf>=4.0.0                 # PDF text extraction
+pandas>=2.0.0                # CSV processing
+
+# ── Caching ──
+redis>=5.0.0                 # Optional Redis client (falls back to in-memory)
+
+# ── Configuration ──
+pydantic>=2.0.0
+pydantic-settings>=2.0.0    # Settings from env vars
+python-dotenv>=1.0.0
+
+# ── Observability ──
+# structlog>=24.0.0          # Structured logging (future enhancement)
+
+# ── Testing ──
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+httpx>=0.27.0                # Async HTTP client (for FastAPI TestClient)

@@ -1,0 +1,81 @@
+# ── Development Docker Compose ──
+#
+# WHAT THIS RUNS:
+# 1. api:       FastAPI backend (with hot-reload for development)
+# 2. redis:     Response cache + task queue
+#
+# ChromaDB runs embedded inside the API process (not as separate service)
+# PostgreSQL is not needed for dev (we use SQLite)
+#
+# HOW TO USE:
+#   docker compose -f docker-compose.dev.yml up
+#
+# OR for local development without Docker:
+#   pip install -r backend/requirements.txt
+#   uvicorn backend.app.main:app --reload --port 8000
+#
+# TEACHING POINT — Why docker-compose for dev:
+# "Works on my machine" is the #1 cause of deployment bugs.
+# Docker Compose ensures every developer runs the same:
+#   - Python version
+#   - System libraries
+#   - Redis version
+#   - Environment variables
+# If it works in docker-compose, it works in production.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: kerala-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - REDIS_URL=redis://redis:6379/0
+      - CONTENT_DIR=data
+      - CHROMA_PERSIST_DIR=./chroma_db
+    env_file:
+      - .env
+    volumes:
+      # Mount source code for hot-reload in development
+      - ./backend:/app/backend
+      - ./src:/app/src
+      - ./data:/app/data:ro
+      - ./chroma_db:/app/chroma_db
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # Override CMD for development (--reload watches for code changes)
+    command: >
+      uvicorn backend.app.main:app
+      --host 0.0.0.0 --port 8000
+      --reload --reload-dir backend
+      --log-level info
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3G
+        reservations:
+          cpus: '1'
+          memory: 1.5G
+
+  redis:
+    image: redis:7-alpine
+    container_name: kerala-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
