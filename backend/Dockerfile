@@ -65,6 +65,16 @@ CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
 list(SparseTextEmbedding('Qdrant/bm25').embed(['warmup'])); \
 print('models cached')"
 
+# Mount point for the SQLite database volume.
+# It must exist in the image AND be owned by appuser: Docker creates a missing
+# mount point as root, and the container runs unprivileged, so without this the
+# app cannot open its database file. When the path does exist, a fresh named
+# volume inherits its ownership.
+# Placed after the model layer so editing it doesn't invalidate that cache.
+USER root
+RUN mkdir -p /app/var && chown appuser:appuser /app/var
+USER appuser
+
 # Expose API port
 EXPOSE 8000
 

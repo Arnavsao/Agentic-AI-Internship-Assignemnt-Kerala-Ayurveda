@@ -51,6 +51,9 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - REDIS_URL=redis://redis:6379/0
       - CONTENT_DIR=data
+      # Must live on the mounted volume, or article job history is lost
+      # every time the container is recreated.
+      - DATABASE_URL=sqlite+aiosqlite:////app/var/kerala_ayurveda.db
     env_file:
       - .env
     volumes:
