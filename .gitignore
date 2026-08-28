@@ -31,8 +31,10 @@ env/
 *.sublime-project
 *.sublime-workspace
 
-# ChromaDB vector store (large binary files, regenerated at runtime)
+# Vector store data (large binary files, rebuilt from data/ via scripts.ingest)
 chroma_db/
+qdrant_local/
+qdrant_storage/
 
 # Logs
 *.log

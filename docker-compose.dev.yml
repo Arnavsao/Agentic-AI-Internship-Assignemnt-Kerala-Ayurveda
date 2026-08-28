@@ -2,10 +2,15 @@
 #
 # WHAT THIS RUNS:
 # 1. api:       FastAPI backend (with hot-reload for development)
-# 2. redis:     Response cache + task queue
+# 2. qdrant:    Vector database (dense + sparse vectors, server-side RRF)
+# 3. redis:     Response cache
 #
-# ChromaDB runs embedded inside the API process (not as separate service)
-# PostgreSQL is not needed for dev (we use SQLite)
+# Qdrant runs as its own service rather than embedded in the API process.
+# That is what allows more than one uvicorn worker: the previous embedded
+# ChromaDB held a local SQLite file that a second process could not safely
+# open, so the API was pinned to --workers 1.
+#
+# PostgreSQL is not needed for dev (we use SQLite for job/document metadata)
 #
 # HOW TO USE:
 #   docker compose -f docker-compose.dev.yml up
@@ -36,7 +41,7 @@ services:
       - DEBUG=true
       - REDIS_URL=redis://redis:6379/0
       - CONTENT_DIR=data
-      - CHROMA_PERSIST_DIR=./chroma_db
+      - QDRANT_URL=http://qdrant:6333
     env_file:
       - .env
     volumes:
@@ -44,10 +49,11 @@ services:
       - ./backend:/app/backend
       - ./src:/app/src
       - ./data:/app/data:ro
-      - ./chroma_db:/app/chroma_db
     depends_on:
       redis:
         condition: service_healthy
+      qdrant:
+        condition: service_started
     restart: unless-stopped
     # Override CMD for development (--reload watches for code changes)
     command: >
@@ -64,6 +70,19 @@ services:
           cpus: '1'
           memory: 1.5G
 
+  qdrant:
+    # Pinned: Qdrant's storage format and Query API have both moved across
+    # minor versions. An unpinned tag turns a `docker compose pull` into an
+    # unplanned migration.
+    image: qdrant/qdrant:v1.12.4
+    container_name: kerala-qdrant
+    ports:
+      - "6333:6333"   # REST + web dashboard at http://localhost:6333/dashboard
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: kerala-redis
@@ -79,3 +98,4 @@ services:
 
 volumes:
   redis_data:
+  qdrant_data:

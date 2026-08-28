@@ -1,36 +1,110 @@
-version: '3.8'
+# ── Production Docker Compose ──
+#
+# Four services:
+#   qdrant     vector database (dense + sparse vectors, server-side RRF)
+#   redis      response cache
+#   api        FastAPI backend — retrieval, agents, jobs
+#   streamlit  thin UI over the API
+#
+#   docker compose up --build
+#   UI  → http://localhost:8501
+#   API → http://localhost:8000/docs
+#
+# Requires a .env with at least one LLM key (see .env.example).
+#
+# The index builds on first API start and persists in the qdrant_data volume.
+# Re-index after editing data/ with:
+#   docker compose exec api python -m scripts.ingest
 
 services:
-  streamlit-app:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: kerala-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: kerala-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: kerala-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      - CONTENT_DIR=data
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data:ro
+      - api_data:/app/var          # SQLite job/document metadata
+    depends_on:
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Generous: first start downloads nothing (models are baked into the
+      # image) but still loads them and runs initial ingestion.
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3G
+        reservations:
+          cpus: '1'
+          memory: 1.5G
+
+  streamlit:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: kerala-ayurveda-rag
+    container_name: kerala-streamlit
     ports:
       - "8501:8501"
     environment:
-      - MEGALLM_API_KEY=${MEGALLM_API_KEY}
-      - CONTENT_DIR=data
-      - PERSIST_DIR=./chroma_db
-    volumes:
-      # Persist ChromaDB index
-      - ./chroma_db:/app/chroma_db
-      # Mount data directory (optional, if you want to update content without rebuild)
-      - ./data:/app/data:ro
+      - API_BASE_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    # Resource limits (adjust based on your needs)
+      start_period: 30s
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
           cpus: '1'
-          memory: 1G
+          memory: 512M
 
+volumes:
+  qdrant_data:
+  redis_data:
+  api_data:

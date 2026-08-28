@@ -42,14 +42,28 @@ WORKDIR /app
 COPY backend/ ./backend/
 COPY src/ ./src/
 COPY data/ ./data/
+COPY scripts/ ./scripts/
 COPY .env.example ./.env.example
 
 # Create necessary directories
-RUN mkdir -p chroma_db uploads && \
+RUN mkdir -p uploads && \
     chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
+
+# Pre-download the local models at build time.
+# Without this, the first container start blocks for a minute or two fetching
+# ~400 MB from HuggingFace — and fails outright in an air-gapped deploy.
+# Costs roughly 1GB of image size to make startup deterministic and offline.
+ENV HF_HOME=/home/appuser/.cache/huggingface
+RUN python -c "\
+from sentence_transformers import SentenceTransformer, CrossEncoder; \
+from fastembed import SparseTextEmbedding; \
+SentenceTransformer('BAAI/bge-base-en-v1.5'); \
+CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
+list(SparseTextEmbedding('Qdrant/bm25').embed(['warmup'])); \
+print('models cached')"
 
 # Expose API port
 EXPOSE 8000
@@ -59,8 +73,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl --fail http://localhost:8000/health || exit 1
 
 # Run with uvicorn
-# --workers 1: Single worker since we're CPU-bound (embedding model)
-# For I/O-bound apps you'd use more workers, but ML models need shared memory
+# --workers 1: each worker loads its own copy of the embedding and reranker
+# models (~500 MB), so workers cost memory linearly. Now that the vector store
+# is a separate Qdrant service rather than an embedded SQLite file, multiple
+# workers are safe to run — raise this when the box has the RAM for it.
 CMD ["uvicorn", "backend.app.main:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \
