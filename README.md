@@ -10,11 +10,11 @@
 > **Agentic AI Internship Assignment** — A production-ready Retrieval-Augmented Generation system with a multi-agent article generation pipeline for Kerala Ayurveda content.
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python&logoColor=white)
-![LangChain](https://img.shields.io/badge/LangChain-1.2.8-green?logo=chainlink)
-![MegaLLM](https://img.shields.io/badge/MegaLLM-gemini--3--pro--preview-blueviolet)
+![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?logo=fastapi)
+![LangGraph](https://img.shields.io/badge/LangGraph-agents-green?logo=chainlink)
+![Qdrant](https://img.shields.io/badge/Qdrant-hybrid%20search-red)
 ![Gemini](https://img.shields.io/badge/Google%20Gemini-3.6%20Flash-orange?logo=google)
-![ChromaDB](https://img.shields.io/badge/ChromaDB-1.4.1-purple)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.54.0-red?logo=streamlit)
+![Streamlit](https://img.shields.io/badge/Streamlit-UI-red?logo=streamlit)
 
 ---
 
@@ -40,16 +40,18 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 
 | Capability | Description |
 |---|---|
-| 🔍 **RAG Q&A** | Answers user questions with structured citations sourced from the Ayurveda knowledge base |
-| 🤖 **Agentic Article Generation** | 4-agent pipeline (Outline → Write → Fact-Check → Tone Edit) produces publication-ready articles |
-| 📊 **Evaluation Framework** | Golden set benchmarking tracks coverage, citation accuracy, hallucination rate & tone compliance |
+| 🔍 **RAG Q&A** | Hybrid retrieval (dense + sparse, RRF-fused, cross-encoder reranked) with structured citations on every answer |
+| 🤖 **Agentic Article Generation** | LangGraph pipeline — outline → parallel section writes → fact-check → revise → tone edit — run as a persisted async job |
+| 📊 **Evaluation Framework** | 18-question golden set with semantic coverage, citation accuracy, LLM-judge grounding, and tone compliance |
 
-**Why it's production-ready:**
-- Adaptive chunking (not one-size-fits-all — 400-800 chars by document type)
-- Traceable citations on every answer (`doc_id` + `section_id` + relevance score)
-- Automatic hallucination guardrails (fact-check score ≥ 0.7 required)
-- Continuous evaluation with a golden test set
-- Clean, modular architecture with a Streamlit web UI
+**What makes it production-shaped:**
+- **Hybrid retrieval** — dense embeddings for concepts, BM25 sparse vectors for exact terms like `KA-P001` and `Shirodhara`, fused server-side by Qdrant
+- **Incremental indexing** — content-hashed; unchanged files are skipped, so re-indexing costs a few file hashes rather than a full re-embed
+- **Fail-loud index contract** — the app refuses to start against a collection built by a different embedding model instead of silently returning nonsense
+- **A real revision loop** — a rejected draft is rewritten before being re-checked, not simply re-checked
+- **Traceable citations** on every answer (`doc_id` + `section_id` + score)
+- **Grounding guardrail** — fact-check ≥ 0.7, and an unparseable fact-check fails closed
+- **Free local models** for embedding, sparse retrieval, and reranking — only generation calls an API
 
 ---
 
@@ -74,16 +76,18 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 │  │   │  model: gemini-3.6-flash        │     │                       │
 │  │   │  keys: auto-rotated (3 keys)    │     │                       │
 │  │   └─────────────────────────────────┘     │                       │
-│  │         Managed by GeminiKeyManager        │                       │
+│  │    Managed by the LLM gateway (llm.py)    │                       │
 │  └───────────────────────────────────────────┘                       │
 │                          │                                           │
 │                          ▼                                           │
 │  ┌───────────────────────────────────────────┐                       │
 │  │              DATA LAYER                   │                       │
 │  │  8 Markdown docs + 1 CSV + 1 PDF book     │                       │
-│  │  → Adaptive chunking (400–800 chars)      │                       │
-│  │  → HuggingFace all-MiniLM-L6-v2 embeddings│                       │
-│  │  → 264 chunks persisted in ChromaDB       │                       │
+│  │  → Adaptive parent/child chunking         │                       │
+│  │  → bge-base-en-v1.5 dense (768d, local)   │                       │
+│  │  → Qdrant/bm25 sparse (local)             │                       │
+│  │  → 130 chunks in Qdrant                   │                       │
+│  │  → Incremental: unchanged files skipped   │                       │
 │  └───────────────────┬───────────────────────┘                       │
 │                      │                                               │
 │                      ▼                                               │
@@ -91,60 +95,72 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 │  │           PART A — RAG SYSTEM             │                       │
 │  │                                           │                       │
 │  │  User Query                               │                       │
-│  │     → Semantic Search (ChromaDB)          │                       │
-│  │     → Top-5 retrieved, Top-3 used         │                       │
+│  │     → Dense + sparse retrieval (Qdrant)   │                       │
+│  │     → RRF fusion, server-side             │                       │
+│  │     → Cross-encoder rerank → top-5        │                       │
+│  │     → Top-3 (parent chunks) into prompt   │                       │
 │  │     → LLM generation (MegaLLM → Gemini)   │                       │
 │  │     → Structured citations returned       │                       │
 │  └───────────────────┬───────────────────────┘                       │
 │                      │                                               │
 │                      ▼                                               │
 │  ┌───────────────────────────────────────────┐                       │
-│  │       PART B — MULTI-AGENT WORKFLOW       │                       │
+│  │   PART B — LANGGRAPH AGENT PIPELINE       │                       │
 │  │                                           │                       │
 │  │  Article Brief                            │                       │
-│  │    → [1] Outline Agent   (temp 0.3)       │                       │
-│  │    → [2] Writer Agent    (temp 0.2)       │                       │
-│  │    → [3] Fact-Checker    (temp 0.0)       │                       │
-│  │    → [4] Tone Editor     (temp 0.2)       │                       │
+│  │    → [1] Outline        (temp 0.3)        │                       │
+│  │    → [2] Write sections (temp 0.2) ║ par. │                       │
+│  │    → [3] Fact-Check     (temp 0.0)        │                       │
+│  │    → [4] Revise         (temp 0.2) ↺ loop │                       │
+│  │    → [5] Tone Edit      (temp 0.2)        │                       │
 │  │    → Final Article  ✓ grounding ≥ 0.7     │                       │
+│  │  Runs as a persisted async job            │                       │
 │  └───────────────────┬───────────────────────┘                       │
 │                      │                                               │
 │                      ▼                                               │
 │  ┌───────────────────────────────────────────┐                       │
 │  │          EVALUATION FRAMEWORK             │                       │
-│  │  • 5-example golden set                   │                       │
-│  │  • Metrics: Coverage, Citations,          │                       │
-│  │    Hallucination Rate, Tone               │                       │
-│  │  • Results persisted to JSONL             │                       │
+│  │  • 18-question golden set (+ negatives)   │                       │
+│  │  • Semantic coverage (embedding cosine)   │                       │
+│  │  • Citation accuracy, LLM-judge grounding │                       │
+│  │  • Tone check (word-boundary, negation)   │                       │
 │  └───────────────────────────────────────────┘                       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+### Service topology
+
+```
+  Streamlit UI  ──HTTP──►  FastAPI backend  ──►  Qdrant  (vectors)
+  (thin client)                    │            └─►  Redis   (cache)
+                                   └─────────────►  SQLite  (jobs, docs)
+```
+
+The UI holds no ML dependencies; everything runs behind the API.
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology | Installed Version | Purpose |
-|-------|-----------|---------|---------| 
-| **LLM (Primary)** | MegaLLM — `gemini-3-pro-preview` | OpenAI-compatible API | Primary LLM provider via `https://ai.megallm.io/v1` |
-| **LLM (Fallback)** | Google Gemini 3.6 Flash | `gemini-3.6-flash` | Fallback with automatic key rotation; override via `GEMINI_MODEL` |
-| **Embeddings** | HuggingFace `all-MiniLM-L6-v2` | `sentence-transformers 5.2.2` | Local semantic embeddings — no API cost |
-| **Vector DB** | ChromaDB | `1.4.1` | Persistent vector store with 264 indexed chunks |
-| **Framework** | LangChain | `1.2.8` | Chains, prompts, document processing |
-| **LangChain Core** | `langchain-core` | `1.2.22` | Runnables, prompt templates, document models |
-| **LangChain Google GenAI** | `langchain-google-genai` | `4.2.0` | Gemini LLM integration via LangChain |
-| **LangChain OpenAI** | `langchain-openai` | `1.1.7` | MegaLLM integration (OpenAI-compatible) |
-| **LangChain HuggingFace** | `langchain-huggingface` | `1.2.1` | HuggingFace embedding integration |
-| **LangChain Community** | `langchain-community` | `0.4.1` | Community vector store integrations (Chroma) |
-| **Text Splitters** | `langchain-text-splitters` | `1.1.0` | Recursive character text splitting |
-| **Google GenAI SDK** | `google-generativeai` | `0.8.6` | Google Generative AI Python SDK |
-| **Data Processing** | Pandas | `2.3.3` | CSV product catalog processing |
-| **Numerics** | NumPy | `2.4.2` | Numerical operations for embeddings |
-| **Validation** | Pydantic | `2.12.5` | Data model validation |
-| **PDF Extraction** | pypdf | `6.9.2` | PDF text extraction for book documents |
-| **Environment** | python-dotenv | `1.2.1` | `.env` file loading for API keys |
-| **UI** | Streamlit | `1.54.0` | Interactive web demo |
-| **Runtime** | Python | `3.13.7` | Core language (via Homebrew) |
+Everything in the retrieval path is local and free — no per-query embedding or reranking cost. Only generation calls an API.
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **API** | FastAPI + Uvicorn | Backend serving retrieval, agents, and jobs |
+| **UI** | Streamlit | Thin HTTP client — no ML dependencies |
+| **Vector DB** | Qdrant | Dense + sparse vectors, server-side RRF fusion |
+| **Dense embeddings** | `BAAI/bge-base-en-v1.5` (768d) | Local semantic embeddings — free |
+| **Sparse embeddings** | `Qdrant/bm25` via FastEmbed | Local keyword matching — free |
+| **Reranker** | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Local cross-encoder — free |
+| **Agents** | LangGraph | Article graph with parallel writes + revision loop |
+| **LLM (Primary)** | MegaLLM — `gemini-3-pro-preview` | Via `https://ai.megallm.io/v1` |
+| **LLM (Fallback)** | Google Gemini — `gemini-3.6-flash` | Automatic key rotation on quota exhaustion |
+| **Cache** | Redis (optional) + in-process LRU | Response cache, keyed by index version |
+| **Metadata** | SQLAlchemy + SQLite | Article jobs, documents, query logs |
+| **Documents** | pypdf, pandas | PDF and CSV parsing |
+| **Runtime** | Python 3.11+ | |
+
+**Why these models.** `bge-base-en-v1.5` scores substantially better than `all-MiniLM-L6-v2` on retrieval benchmarks (MTEB 53.3 vs 41.8) and has a 512-token window, at 768 dimensions and ~220 MB. `BGE-M3` would be stronger still but is 2.2 GB and roughly 8× slower on CPU, and its native sparse output is redundant next to Qdrant's BM25. The reranker stays on the small MiniLM cross-encoder because it scores 10 pairs in 50–100 ms on CPU; `bge-reranker-base` takes 0.5–1.5 s for the same batch, which is a poor trade on a hot path over a corpus this size. Override either with `EMBEDDING_MODEL` / `RERANKER_MODEL`.
 
 ---
 
@@ -152,12 +168,37 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 
 ```
 .
-├── src/
-│   ├── __init__.py               # Package exports for all public classes
-│   ├── rag_system.py             # Part A — RAG: chunking, retrieval, Q&A with citations
-│   ├── agent_workflow.py         # Part B — 4-agent pipeline for article generation
-│   ├── evaluation.py             # Evaluation framework: golden set, metrics, tracking
-│   └── key_manager.py            # LLM provider manager: MegaLLM → Gemini key rotation
+├── backend/app/
+│   ├── main.py                   # FastAPI app, lifespan, middleware
+│   ├── core/                     # config (pydantic-settings), logging, database
+│   ├── models/schemas.py         # SQLAlchemy: documents, chunks, query logs, jobs
+│   ├── api/routes/               # health, query, documents, articles
+│   └── services/
+│       ├── llm.py                # LLM gateway: failover + key rotation
+│       ├── cache.py              # Two-layer response cache (LRU + Redis)
+│       ├── evaluation.py         # Metric scorers
+│       ├── agents/               # LangGraph article pipeline
+│       │   ├── models.py         #   ArticleState and the inter-node contracts
+│       │   ├── prompts.py        #   Agent prompts and guardrails
+│       │   ├── nodes.py          #   Node implementations
+│       │   └── graph.py          #   Graph wiring, fan-out, revision loop
+│       ├── ingestion/service.py  # Incremental, hash-diffed indexing
+│       └── rag/
+│           ├── chunker.py        #   Adaptive parent/child chunking
+│           ├── embeddings.py     #   Dense (bge) + sparse (bm25) encoders
+│           ├── vectorstore.py    #   Qdrant adapter
+│           ├── retriever.py      #   Hybrid retrieval + reranking
+│           ├── generator.py      #   Answer generation with citations
+│           └── pipeline.py       #   Orchestration
+│
+├── scripts/
+│   ├── ingest.py                 # CLI: index the knowledge base
+│   └── evaluate.py               # CLI: run the golden-set benchmark
+│
+├── eval/golden_set.json          # 18 benchmark questions incl. negative cases
+├── streamlit_app.py              # UI — thin HTTP client over the API
+│
+├── src/                          # LEGACY single-process stack (superseded)
 │
 ├── data/                         # Kerala Ayurveda knowledge base (10 documents)
 │   ├── ayurveda_foundations.md
@@ -171,17 +212,19 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 │   ├── products_catalog.csv      # 8-product structured catalog
 │   └── ayurveda_chapter_1_and_2.pdf  # Astanga Hridaya (Vagbhat) — 24-page PDF book
 │
-├── chroma_db/                    # Persisted ChromaDB vector index (264 chunks)
-├── evaluation_results/           # Timestamped evaluation JSON outputs
-├── golden_set.json               # 5 benchmark Q&A pairs
-├── metrics_history.jsonl         # Continuous metrics log
+├── tests/
+│   ├── unit/                     # chunker, vectorstore, ingestion, agents,
+│   │                             #   llm gateway, evaluation scorers
+│   └── integration/              # retrieval against real models
 │
-├── streamlit_app.py              # Web UI entrypoint
-├── run.sh                        # Launcher — pins the venv interpreter
-├── test_project.py               # Project validation tests
-├── requirements.txt              # Python dependencies
-├── .streamlit/config.toml        # Streamlit Cloud / local server config
-├── .env.example                  # Example environment variables
+├── evaluation_results/           # Timestamped evaluation JSON outputs
+├── docker-compose.yml            # Production: qdrant + redis + api + streamlit
+├── docker-compose.dev.yml        # Development: qdrant + redis + api (hot reload)
+├── Dockerfile                    # Streamlit UI image (thin)
+├── backend/Dockerfile            # API image (models baked in)
+├── requirements.txt              # UI dependencies only
+├── backend/requirements.txt      # Backend dependencies
+├── .env.example                  # Documented environment variables
 └── .env                          # API keys (gitignored — never committed)
 ```
 
@@ -189,78 +232,134 @@ This project builds an end-to-end **AI content pipeline** for Kerala Ayurveda:
 
 ## ⚡ Quick Start
 
-### 1. Clone & Install
+### Option A — Docker (recommended)
+
+Brings up Qdrant, Redis, the API, and the UI together.
 
 ```bash
 git clone https://github.com/Arnavsao/Agentic-AI-System-Kerala-Ayurveda.git
 cd Agentic-AI-System-Kerala-Ayurveda
 
+cp .env.example .env      # add at least one LLM key
+docker compose up --build
+```
+
+- UI: [http://localhost:8501](http://localhost:8501)
+- API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Qdrant dashboard: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
+
+The index builds on first API start (about 10 s for this corpus) and persists
+in a Docker volume. Later starts skip files whose contents haven't changed.
+
+### Option B — Local development
+
+```bash
 python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+source venv/bin/activate
+./venv/bin/python -m pip install -r backend/requirements.txt
 ./venv/bin/python -m pip install -r requirements.txt
-```
 
-> Invoke pip as `./venv/bin/python -m pip`, not `./venv/bin/pip`. The `pip`
-> shebang hardcodes an absolute path, so it breaks if the project folder is
-> ever moved or renamed.
+# Vector store + cache
+docker compose -f docker-compose.dev.yml up -d qdrant redis
 
-### 2. Configure API Keys
+# Index the knowledge base
+./venv/bin/python -m scripts.ingest
 
-Create a `.env` file in the project root:
-
-```env
-# Primary LLM — MegaLLM (gemini-3-pro-preview via OpenAI-compatible API)
-MEGA_API_KEY=sk-mega-your_megallm_key_here
-
-# Fallback — Google Gemini (auto-rotated on quota exhaustion)
-GOOGLE_API_KEY_1=your_google_api_key_1
-GOOGLE_API_KEY_2=your_google_api_key_2   # optional
-GOOGLE_API_KEY_3=your_google_api_key_3   # optional
-
-# Legacy single-key fallback (used if numbered keys not found)
-GOOGLE_API_KEY=your_google_api_key
-```
-
-- Get a MegaLLM key at [megallm.io](https://megallm.io)
-- Get a free Gemini key at [Google AI Studio](https://aistudio.google.com/app/apikey)
-
-The system tries MegaLLM first; if it fails for any reason it automatically falls back to Gemini with key rotation.
-
-### 3. Run the Streamlit App
-
-```bash
-./run.sh
-```
-
-Open [http://localhost:8501](http://localhost:8501) — the knowledge base loads automatically
-(~15s on a warm ChromaDB index, ~30s longer if it must be rebuilt).
-
-`run.sh` pins the project virtualenv. Avoid a bare `streamlit run streamlit_app.py`:
-that resolves `streamlit` from `PATH`, and if it picks a system Python without this
-project's dependencies the app stalls on startup instead of reporting an error.
-The equivalent explicit command is:
-
-```bash
+# API, then UI in a second shell
+./venv/bin/python -m uvicorn backend.app.main:app --reload
 ./venv/bin/python -m streamlit run streamlit_app.py
 ```
+
+> Invoke pip as `./venv/bin/python -m pip`, not `./venv/bin/pip` — the `pip`
+> shebang hardcodes an absolute path and breaks if the folder is moved.
+
+**No Docker at all?** Point Qdrant at a local directory instead of a server:
+
+```bash
+QDRANT_URL=./qdrant_local ./venv/bin/python -m scripts.ingest
+```
+
+Local file mode implements the same Query API but locks the directory to one
+process, so use a server for anything beyond single-process development.
+
+### Configure API keys
+
+Only generation needs an API key — embeddings and reranking run locally.
+
+```env
+# Primary (optional)
+MEGA_API_KEY=sk-mega-your_megallm_key_here
+
+# Fallback, rotated automatically on quota exhaustion
+GOOGLE_API_KEY_1=your_google_api_key_1
+GOOGLE_API_KEY_2=
+GOOGLE_API_KEY_3=
+```
+
+Free Gemini keys: [Google AI Studio](https://aistudio.google.com/app/apikey) ·
+MegaLLM keys: [megallm.io](https://megallm.io)
+
+Keys are tried in order and **the first empty slot ends the list**, so don't
+leave a gap. See `.env.example` for every setting.
+
+### Managing the index
+
+```bash
+python -m scripts.ingest              # incremental — skips unchanged files
+python -m scripts.ingest --rebuild    # full re-embed (after a model change)
+python -m scripts.ingest --status     # what's indexed, changes nothing
+```
+
+Changing `EMBEDDING_MODEL` invalidates the index. The app refuses to start
+against a mismatched collection rather than querying one vector space with
+another's vectors, and the error names the fix.
 
 ---
 
 ## 🔍 Part A — RAG System
 
-**File:** `src/rag_system.py`
+**Files:** `backend/app/services/rag/` · **Endpoint:** `POST /api/v1/query`
 
 ### How It Works
 
 ```
 User Query
-   ↓  Convert to embedding vector (all-MiniLM-L6-v2, 384 dimensions)
-   ↓  Semantic search → retrieve 5 most relevant chunks from 264 indexed
-   ↓  Select top 3 for generation (balance relevance vs. context length)
+   ↓  Embed as a dense vector (bge-base-en-v1.5, 768d, with query prefix)
+   ↓  Embed as a sparse vector (Qdrant/bm25 term weights)
+   ↓  Qdrant retrieves top-10 by each and fuses them with RRF (server-side)
+   ↓  Cross-encoder reranks the fused candidates → top-5
+   ↓  Take top-3, expanding each to its parent chunk for context
    ↓  Build prompt with [Source X: doc_id - section_id] labels
-   ↓  MegaLLM generates answer (fallback: Gemini 3.6 Flash)
+   ↓  MegaLLM generates the answer (fallback: Gemini, with key rotation)
    ↓  Return QueryResponse(answer, citations, retrieved_chunks)
 ```
+
+### Why hybrid search
+
+Dense retrieval handles conceptual questions well but misses the cases that
+matter most in a product and safety corpus:
+
+| Query | Dense alone | With sparse |
+|---|---|---|
+| `KA-P001` | Embeddings encode identifiers poorly | Exact term match |
+| `Shirodhara` | Rare term, likely out-of-distribution | Exact term match |
+| "How does Ayurveda view stress?" | Strong | Strong |
+
+Both branches run inside Qdrant and are merged with Reciprocal Rank Fusion:
+
+```
+score(doc) = Σ 1 / (k + rank_i(doc))        k = 60
+```
+
+RRF is rank-based, so scores from the two systems never need to be on a
+comparable scale, and it has no weights to tune. A document ranked well by
+both branches scores far higher than one ranked well by only one.
+
+The cross-encoder then rescores the survivors. The embedding model is a
+bi-encoder — it encodes query and document separately, which is fast but blind
+to their interaction. A cross-encoder reads both together and can judge
+"does this passage about Ashwagandha actually answer the pregnancy question?"
+It is far slower per pair, so it only ever sees ~10 candidates.
 
 ### Adaptive Chunking Strategy
 
@@ -291,7 +390,7 @@ Splitters try to break at `## headers → ### headers → paragraphs → sentenc
 | `products_catalog.csv` | Catalog | 8-product structured catalog with metadata |
 | `ayurveda_chapter_1_and_2.pdf` | PDF Book | Astanga Hridaya (Vagbhat) — 24 pages |
 
-**Total indexed chunks: 264** (persisted in ChromaDB for instant startup on subsequent runs).
+**Total indexed chunks: 130** (persisted in Qdrant; unchanged files are skipped on re-index).
 
 ### Citation Structure
 
@@ -326,258 +425,378 @@ Sources:
 
 ## 🤖 Part B — Multi-Agent Workflow
 
-**File:** `src/agent_workflow.py`
+**Files:** `backend/app/services/agents/` · **Endpoint:** `POST /api/v1/articles/generate`
 
-### Agent Pipeline
+Built on **LangGraph** — the agents are nodes in a state machine rather than a
+straight-line sequence of Python calls.
 
-```
-ArticleBrief
-    ↓
-[Agent 1: OutlineAgent]
-    • Queries RAG to verify corpus coverage
-    • Generates JSON-structured outline (sections + key points)
-    • Guardrail: only creates sections that can be supported by data
-    ↓
-[Agent 2: WriterAgent]
-    • Retrieves RAG context per section (not generic article-level)
-    • Writes full draft with [Source: doc_id - section_id] citations
-    • Enforces Kerala Ayurveda brand voice
-    ↓
-[Agent 3: FactCheckerAgent]  ← Most critical step
-    • Extracts all factual claims from draft
-    • Scores grounding: supported_claims / total_claims
-    • Auto-rejects if grounding_score < 0.7
-    • Suggests RAG sources for unsupported claims
-    ↓
-[Agent 4: ToneEditorAgent]
-    • Loads style guide from RAG corpus
-    • Scores style adherence (0–1)
-    • Revises content for brand voice — never removes citations
-    ↓
-FinalArticle (with fact_check_score, style_score, editor_notes)
-```
-
-### LLM Provider Strategy (via `key_manager.py`)
-
-All four agents share a single `GeminiKeyManager` instance for coordinated key rotation:
+### Agent Graph
 
 ```
-Request → MegaLLM (gemini-3-pro-preview via ai.megallm.io/v1)
-           │
+   outline  ── plans against what the corpus can actually support
+      │
+      ├─ Send ─→ write_section  ┐
+      ├─ Send ─→ write_section  ├─ run concurrently, each with its own retrieval
+      └─ Send ─→ write_section  ┘
+                    │
+                    ▼
+             assemble_draft
+                    │
+                    ▼
+               fact_check ◄────────────┐
+                    │                  │
+          grounded? │                  │ revised draft
+             ┌──────┴───────┐          │
+             │ no, budget   ├──────────┘
+             │ remaining    │   revise
+             │              │
+             │ yes / spent  │
+             └──────┬───────┘
+                    ▼
+                tone_edit
+                    │
+                   END
+```
+
+Runs as a persisted async job: `POST` returns a job ID immediately and the
+client polls `GET /api/v1/articles/{job_id}`. Progress is written to the
+database as each node completes, so a job survives a browser refresh — and a
+job interrupted by a restart is marked failed rather than polling forever.
+
+### What each node does
+
+| Node | Temp | Behaviour |
+|---|---|---|
+| **outline** | 0.3 | Retrieves corpus evidence, plans only sections the data supports |
+| **write_section** | 0.2 | One per section, **in parallel**, each retrieving its own evidence |
+| **assemble_draft** | — | Stitches sections in order, extracts citations |
+| **fact_check** | 0.0 | Extracts claims, scores grounding against retrieved evidence |
+| **revise** | 0.2 | Rewrites flagged claims — adds citations, softens, or removes |
+| **tone_edit** | 0.2 | Aligns voice with the style guide without touching facts |
+
+### Design notes
+
+**Agents retrieve raw chunks.** Every agent previously reached the corpus
+through `answer_user_query()` — a retrieval *plus a full LLM generation* — so
+each lookup cost a round trip and returned a paraphrase. The writer then
+grounded its citations on a summary of a summary. Nodes now call the retriever
+directly: lookups are vector queries in milliseconds, and the text an agent
+cites is the text actually in the knowledge base.
+
+**The revision loop is real.** The previous retry re-ran the fact-checker on
+the *same unmodified draft*, so a rejected article could only be rejected again
+— the source even carried a comment reading "In production, would have revision
+agent here." `revise` is that agent.
+
+**Cost.** Roughly 5–7 sequential LLM steps (sections run in parallel) rather
+than 11–15 strictly sequential ones.
+
+### LLM Provider Strategy
+
+```
+Request → MegaLLM (gemini-3-pro-preview)
            │ fails? (timeout / quota / error)
            ▼
-          Gemini Key 1 (GOOGLE_API_KEY_1)
-           │
-           │ 429 / quota exhausted?
-           ▼
-          Gemini Key 2 (GOOGLE_API_KEY_2)
-           │
-           │ 429 / quota exhausted?
-           ▼
-          Gemini Key 3 (GOOGLE_API_KEY_3)
-           │
+          Gemini key 1 → key 2 → key 3
            │ all exhausted?
            ▼
-          RuntimeError raised
+          LLMProviderError
 ```
 
-### Article Brief Example
-
-```python
-brief = ArticleBrief(
-    topic="Ayurvedic Support for Stress and Better Sleep",
-    target_audience="Busy professionals experiencing stress and sleep issues",
-    key_points=[
-        "How Ayurveda views stress and sleep",
-        "Practical lifestyle approaches",
-        "Herbs that support stress resilience",
-        "Evening routines for better sleep"
-    ],
-    word_count_target=800,
-    must_include_products=["Ashwagandha Stress Balance Tablets", "Brahmi Tailam"]
-)
-```
-
-### Guardrails
-
-| Agent | Failure Mode | Guardrail |
-|-------|------------|---------|
-| Outline | Topics not in corpus | Corpus coverage check before outlining |
-| Writer | Hallucinated claims | Per-section RAG retrieval enforced |
-| Fact-Checker | Missed unsupported claims | 0.7 grounding threshold — auto-reject below |
-| Tone Editor | Removes safety disclaimers | Must preserve all citations & medical caveats |
-
----
+Concurrent calls are capped (`LLM_MAX_CONCURRENCY`, default 3) so parallel
+section writes can't exhaust the Gemini free tier's 15 requests/minute in one
+burst. Rotation is lock-guarded and retry backoff is non-blocking on the async
+path.
 
 ## 📊 Evaluation Framework
 
-**File:** `src/evaluation.py`
+**Files:** `backend/app/services/evaluation.py`, `scripts/evaluate.py`, `eval/golden_set.json`
 
-### Golden Set
+```bash
+python -m scripts.evaluate                  # full golden set
+python -m scripts.evaluate --no-judge       # local metrics only, no API calls
+python -m scripts.evaluate --ids q005 q013  # specific questions
+```
 
-5 benchmark questions covering the system's main use cases:
+### Golden Set — 18 questions
 
-| ID | Query | Category |
-|----|-------|---------|
-| q001 | Benefits of Ashwagandha for stress? | Product |
-| q002 | Contraindications for Triphala? | Product (safety-critical) |
-| q003 | Can Ayurveda help with stress and sleep? | FAQ |
-| q004 | What is Vata dosha? | Concept |
-| q005 | How does the Stress Support Program work? | Treatment |
+Grown from 5. Every corpus document is now covered, plus multi-document
+synthesis and negative cases.
 
-### Metrics Tracked
+| Category | Count | Purpose |
+|---|---|---|
+| Product | 4 | Product dossiers, including safety-critical questions |
+| Concept | 4 | Doshas and foundations |
+| FAQ / style | 2 | Patient FAQ and the brand style guide |
+| Treatment | 1 | Stress Support Program |
+| Catalog | 2 | CSV catalog, including exact-ID lookup |
+| Multi-document | 2 | Answers requiring synthesis across sources |
+| Classical text | 1 | The 24-page Astanga Hridaya PDF |
+| **Negative** | **2** | **Must refuse — out of scope or absent from the corpus** |
 
-| Metric | Description | Target |
-|--------|------------|--------|
-| **Coverage Score** | % of expected key points in answer | ≥ 0.60 |
-| **Citation Accuracy** | Expected sources actually cited | ≥ 0.50 |
-| **Hallucination Rate** | % of answers with unsupported claims | ≤ 0.20 |
-| **Tone Compliance** | % of answers using proper brand voice | ≥ 0.80 |
+Negative cases matter most here: a system that fabricates a price or claims a
+cure fails in a way that no coverage score would catch.
 
-Results are saved to `evaluation_results/` with timestamps and appended to `metrics_history.jsonl` for trend tracking.
+### Metrics
+
+| Metric | How it is computed | Target |
+|---|---|---|
+| **Coverage** | Embedding cosine similarity between the answer's best-matching sentence and each expected point | ≥ 0.60 |
+| **Citation accuracy** | Fraction of expected source documents actually cited | ≥ 0.50 |
+| **Faithfulness / hallucination** | LLM judge comparing the answer against retrieved sources | ≤ 0.20 hallucination |
+| **Tone compliance** | Word-boundary red-flag scan + hedged-phrasing check | ≥ 0.80 |
+| **Negative refusal** | Did the system decline to answer out-of-scope questions? | 1.00 |
+
+### Three scorers were rewritten, because they were measuring themselves
+
+The earlier benchmark numbers were partly artifacts of the metric code:
+
+**Coverage was a substring test.** A correct answer phrased differently scored
+zero. This is precisely why q005 reported **0.00 coverage** while the report's
+own analysis conceded the answer was "correct but overly general." It is now
+embedding similarity, so paraphrase is credited the way a human grader would —
+with a literal match kept as a floor.
+
+**The hallucination detector was `"YES" in response.upper()`.** A judge
+replying *"Yes, this is well grounded"* was recorded as a hallucination,
+because the substring appears regardless of what follows. The judge now
+returns a structured verdict, and an unparseable reply counts as *unknown*
+rather than silently passing or failing.
+
+**The tone checker matched red-flag words as substrings.** `"cure"` matched
+`"procedure"` — and, worse, matched `"does not cure"`, the exact hedged
+phrasing the style guide instructs writers to use. It now uses word boundaries
+with negation-aware context.
+
+Citation accuracy was sound and is unchanged.
 
 ---
 
 ## 📈 Benchmark Report
 
-The following benchmark was run against the 5-question golden set on **2026-03-23** using the full evaluation pipeline (`src/evaluation.py`). The RAG system answered each question using its standard retrieval + generation flow, and the evaluation framework scored each answer on four metrics.
+Run on **2026-08-29** against the 18-question golden set via
+`python -m scripts.evaluate`, with LLM-judge grounding enabled.
 
 ### Aggregate Results
 
 | Metric | Score | Target | Status |
 |--------|-------|--------|--------|
-| **Average Coverage Score** | **0.60** (60%) | ≥ 0.60 | ✅ Met |
-| **Average Citation Accuracy** | **1.00** (100%) | ≥ 0.50 | ✅ Exceeded |
-| **Hallucination Rate** | **0.80** (80%) | ≤ 0.20 | ❌ Above target |
-| **Tone Compliance Rate** | **0.60** (60%) | ≥ 0.80 | ⚠️ Below target |
+| **Average Coverage** | **0.94** (94%) | ≥ 0.60 | ✅ Exceeded |
+| **Average Citation Accuracy** | **0.92** (92%) | ≥ 0.50 | ✅ Exceeded |
+| **Hallucination Rate** | **0.50** (50%) | ≤ 0.20 | ❌ Above target |
+| **Tone Compliance** | **1.00** (100%) | ≥ 0.80 | ✅ Exceeded |
+| **Negative Refusal Rate** | **1.00** (100%) | 1.00 | ✅ Met |
+| Average faithfulness | 0.81 | — | — |
+| Average latency | 17.3 s | — | dominated by generation |
 
-### Per-Query Breakdown
+**9 of 18 questions passed all four gates.**
 
-| ID | Query | Coverage | Citation Acc. | Hallucination? | Tone OK? |
-|----|-------|----------|---------------|----------------|----------|
-| q001 | Benefits of Ashwagandha for stress? | **0.75** | **1.00** | ⚠️ Yes | ❌ No |
-| q002 | Contraindications for Triphala? | **0.75** | **1.00** | ⚠️ Yes | ❌ No |
-| q003 | Can Ayurveda help with stress and sleep? | **0.50** | **1.00** | ✅ No | ✅ Yes |
-| q004 | What is Vata dosha? | **1.00** | **1.00** | ⚠️ Yes | ✅ Yes |
-| q005 | How does the Stress Support Program work? | **0.00** | **1.00** | ⚠️ Yes | ✅ Yes |
+### Comparison with the previous benchmark
 
-### Detailed Analysis
+Not directly comparable — the golden set grew from 5 questions to 18, and
+three scorers were rewritten because they were measuring their own
+implementation rather than the system. Both columns are shown for orientation,
+not as a controlled A/B.
 
-#### ✅ Strengths
+| Metric | Before (5q, old scorers) | After (18q, fixed scorers) |
+|---|---|---|
+| Coverage | 0.60 | **0.94** |
+| Citation accuracy | 1.00 | 0.92 |
+| Hallucination rate | 0.80 | **0.50** |
+| Tone compliance | 0.60 | **1.00** |
+| Negative cases | none tested | 2/2 refused |
 
-- **Citation accuracy is 100%** across all 5 queries — every answer correctly cited the expected source document, demonstrating the retrieval pipeline reliably surfaces the right content.
-- **q004 (Vata dosha)** achieved **perfect coverage** (1.00) — all four expected key points ("movement", "light", "dry", "tendencies") appeared in the answer.
-- **q001 and q002** both scored **0.75 coverage**, successfully covering 3 out of 4 expected key points each.
+### The q005 regression is fixed
 
-#### ⚠️ Areas for Improvement
+"How does the Stress Support Program work?" previously scored **0.00 coverage**
+— the answer never mentioned Abhyanga or Shirodhara. It now scores **1.00**,
+and both terms plus the consultation step appear in the retrieved context.
 
-- **Hallucination rate (80%)** is significantly above the 20% target. The hallucination detector (LLM-as-judge) flagged 4 of 5 answers as containing claims not directly in the source chunks. This is partially a strictness issue — the detector is conservative, flagging reasonable inferences (e.g., "daily support for stress resilience" when the source says "traditionally used to support the body's ability to adapt to stress"). Tuning the hallucination detector prompt would reduce false positives.
+Two independent causes, both addressed:
 
-- **q005 coverage (0.00)** — the answer for "How does the Stress Support Program work?" failed to mention specific treatments ("Abhyanga", "Shirodhara") that were expected. The answer was correct but overly general, focusing on the program's complementary nature rather than specific treatment steps. This suggests the retrieval stage may not have surfaced the most detail-rich chunks for this query.
+1. **Retrieval.** "Shirodhara" is a rare term that dense embeddings handle
+   poorly. Sparse BM25 retrieval now matches it exactly.
+2. **Scoring.** The old substring metric would have scored a correct paraphrase
+   zero regardless of retrieval quality.
 
-- **Tone compliance (60%)** — the tone checker uses keyword-based heuristics (looking for ≥ 2 of: "traditionally used", "may help", "support", "consult"). Two answers (q001, q002) scored as non-compliant despite using appropriate cautious language, because they used slightly different phrasing. Enhancing the tone checker with semantic matching would improve this metric.
+### Retrieval is strong; generation is the weak link
+
+Coverage (0.94) and citation accuracy (0.92) say the right chunks are being
+found and cited. The hallucination rate says the model then embellishes them.
+
+The judge's reasons are specific and checkable — for q016 it flagged "the four
+purposes of life (Dharma, Artha…)", which is accurate Ayurvedic knowledge that
+simply is not in the retrieved sources. The failure mode is the model drawing
+on training knowledge to produce a *richer* answer than the corpus supports.
+
+**This is an open issue, not a solved one.** Tightening the generation prompt
+to forbid outside knowledge was tried: it improved three of the six worst
+cases and worsened three others — net neutral on faithfulness, though coverage
+rose to 100% on that subset. The clearer prompt was kept, but it did not move
+the metric.
+
+Approaches worth trying next, roughly in order of expected value:
+
+- **A grounding pass over the draft answer** — the same shape as the article
+  pipeline's `revise` node, which does have a real feedback loop, applied to
+  Q&A. This is the most likely fix, since it corrects rather than instructs.
+- **Sentence-level citation enforcement** — programmatically strip sentences
+  that carry no `[Source X]` marker.
+- **Judge calibration** — the current judge counts any unsupported clause
+  against the answer. Some flagged items are benign connective phrasing; a
+  claim-weighted rubric would separate embellishment from framing.
+
+A caveat on measurement: these are single-run numbers, and both generation and
+judging vary between runs. Differences of ±0.1 on a single question should not
+be read as signal.
 
 ### Benchmark Environment
 
 | Parameter | Value |
 |-----------|-------|
-| Date | 2026-03-23T17:34:43 |
-| LLM Model | `gemini-2.5-flash` (via MegaLLM → Gemini fallback) |
-| Embedding Model | `sentence-transformers/all-MiniLM-L6-v2` (384d, local) |
-| Vector DB | ChromaDB (264 chunks indexed) |
-| Knowledge Base | 10 documents (8 Markdown + 1 CSV + 1 PDF) |
-| Golden Set Size | 5 queries |
-| Evaluation Output | `evaluation_results/rag_eval_20260323_173443.json` |
+| Date | 2026-08-29 |
+| Vector store | Qdrant, 130 chunks, collection `ayurveda_rag_v2` |
+| Dense embeddings | `BAAI/bge-base-en-v1.5` (768d, local) |
+| Sparse embeddings | `Qdrant/bm25` (local) |
+| Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` (local) |
+| Generation | MegaLLM `gemini-3-pro-preview` → Gemini `gemini-3.6-flash` |
+| Golden set | 18 questions incl. 2 negative cases |
+| Retrieval funnel | top-10 fused → rerank 5 → 3 in prompt |
+
+### A note on the "264 chunks" in earlier documentation
+
+The previous index reported 264 chunks. It actually held **130 unique chunks,
+each stored twice** — every document's count in the old store is exactly double
+the current one (PDF 150→75, FAQ 20→10, each catalog product 2→1). Indexing
+appended with random IDs, so re-running it duplicated the entire corpus rather
+than updating it. Point IDs are now derived from content, making re-ingestion
+idempotent.
 
 ---
 
 ## 🚀 Running the Project
 
-Run every command from the project root. The examples use `./venv/bin/python`
-explicitly so they work whether or not the virtualenv is activated — the modules
-use absolute `from src.… import`, so they must be run as `python -m src.<module>`.
+Run everything from the project root.
 
-### Streamlit Web UI (Recommended)
+### Full stack
 
 ```bash
-./run.sh
+docker compose up --build
 ```
 
-### RAG System Demo (Terminal)
+UI at :8501, API docs at :8000/docs, Qdrant dashboard at :6333/dashboard.
+
+### Backend only (development)
 
 ```bash
-./venv/bin/python -m src.rag_system
+docker compose -f docker-compose.dev.yml up -d qdrant redis
+./venv/bin/python -m uvicorn backend.app.main:app --reload
 ```
 
-Runs 3 example queries and prints answers with full citation details.
-
-### Agent Workflow Demo (Terminal)
+### Query the API directly
 
 ```bash
-./venv/bin/python -m src.agent_workflow
+curl -X POST http://localhost:8000/api/v1/query \
+  -H 'content-type: application/json' \
+  -d '{"query": "Is Ashwagandha safe during pregnancy?"}'
 ```
 
-Runs the full 4-agent pipeline on a sample stress & sleep article brief. Takes ~2-3 minutes.
-
-### Evaluation Suite
+### Generate an article
 
 ```bash
-./venv/bin/python -m src.evaluation
+JOB=$(curl -s -X POST http://localhost:8000/api/v1/articles/generate \
+  -H 'content-type: application/json' \
+  -d '{"topic": "Ayurvedic Support for Stress and Better Sleep",
+       "target_audience": "Busy professionals",
+       "key_points": ["How Ayurveda views stress", "Herbs that support resilience"],
+       "word_count_target": 800}' | jq -r .job_id)
+
+curl -s http://localhost:8000/api/v1/articles/$JOB | jq '{status, current_step}'
 ```
 
-Evaluates all 5 golden examples and saves results to `evaluation_results/`.
+The job runs server-side and its progress is persisted, so polling can stop
+and resume freely.
 
-### Rebuild the Vector Index
+### Index management
 
 ```bash
-rm -rf chroma_db
+python -m scripts.ingest              # incremental
+python -m scripts.ingest --rebuild    # full re-embed
+python -m scripts.ingest --status     # inspect, change nothing
 ```
 
-The index is reused on startup when present. Delete it to force a re-embed
-(~30s) after changing anything in `data/`.
-
-### Override the Gemini Model
+### Evaluation
 
 ```bash
-GEMINI_MODEL=gemini-3.5-flash-lite ./run.sh
+python -m scripts.evaluate             # full golden set, with LLM judge
+python -m scripts.evaluate --no-judge  # local metrics only, no API calls
 ```
 
-The Gemini fallback model defaults to `gemini-3.6-flash`. Point `GEMINI_MODEL`
-at a different model to use a separate free-tier quota pool if the default is
-exhausted.
-
-### Project Tests
+### Tests
 
 ```bash
-./venv/bin/python test_project.py
+pytest tests/ -m "not integration"   # 138 unit tests, no models loaded (~13s)
+pytest tests/ -m integration         # 13 tests against real models (~1min)
+pytest tests/                        # everything
 ```
 
-Validates that all imports, the RAG system, and the evaluation framework load correctly.
+| Suite | Covers |
+|---|---|
+| `test_chunker.py` | Adaptive chunking, content hashing |
+| `test_vectorstore.py` | Qdrant adapter, index compatibility guards |
+| `test_ingestion.py` | Incremental diffing, idempotent upserts |
+| `test_agent_graph.py` | Graph routing, revision loop, failure handling |
+| `test_llm_provider.py` | Parameter pass-through, failover, rotation, concurrency |
+| `test_evaluation.py` | Metric scorers and their former bugs |
+| `integration/test_retrieval.py` | End-to-end retrieval with real models |
 
 ---
 
 ## 🎯 Key Design Decisions
 
-**1. Local Embeddings (HuggingFace `all-MiniLM-L6-v2`)**
-Using local embeddings instead of an API means no extra cost, no rate limits, and faster indexing. The 384-dimension model is well-suited for semantic medical Q&A.
+**1. Qdrant with dense + sparse vectors**
+Keyword search used to be a Python BM25 index rebuilt at every startup by
+scanning the whole collection through a private API. Qdrant stores a sparse
+vector beside the dense one and fuses both with RRF internally, so startup
+touches nothing and retrieval is one query.
 
-**2. Adaptive Chunking by Document Type**
-FAQ documents need small chunks (400 chars) to keep Q&A pairs together. Guides and PDFs need larger chunks (800 chars) to maintain conceptual context. A single chunk size would degrade retrieval quality.
+**2. Local models throughout the retrieval path**
+`bge-base-en-v1.5` for dense, `Qdrant/bm25` for sparse, and a MiniLM
+cross-encoder for reranking — all free, no rate limits, no per-query cost.
+Only generation calls an API.
 
-**3. Retrieve 5, Use Top 3**
-Retrieving 5 chunks casts a wide semantic net while passing only 3 to the LLM keeps the prompt focused and avoids context dilution. All 5 are returned in the response for transparency.
+**3. Content-addressed point IDs**
+Point IDs are `uuid5(doc_id + content_hash)`, so re-ingesting unchanged text
+upserts in place. This is what makes incremental indexing possible, and it is
+why the corpus is no longer stored twice.
 
-**4. Per-Section RAG in Writer Agent**
-The Writer Agent queries RAG once per outline section rather than once for the whole article. This ensures each section gets the most relevant sources, not a one-size-fits-all context block.
+**4. A vector-space contract, enforced at startup**
+The collection records which embedding model built it. Booting with a
+different model raises immediately instead of querying one vector space with
+another's vectors — the previous code reused any non-empty collection, so a
+768-d model could silently query a 384-d index.
 
-**5. 0.7 Grounding Threshold**
-The Fact-Checker auto-rejects articles below 70% grounding. Medical content has zero tolerance for hallucination — this threshold triggers a revision loop (up to 2 iterations) before escalating to an editor note.
+**5. Parent-child chunks, parents inlined**
+Retrieval matches small precise chunks; the LLM receives the larger parent for
+context. Parents live in the child's payload rather than as their own points —
+they are only ever looked up by ID, never searched.
 
-**6. MegaLLM-First Provider Strategy**
-The `key_manager.py` tries MegaLLM (OpenAI-compatible API at `ai.megallm.io/v1`) first for every call, then falls back to Gemini with automatic key rotation. This maximizes availability — if MegaLLM is down or rate-limited, the system transparently switches to Gemini without any user intervention.
+**6. Agents retrieve chunks, not generated summaries**
+Every agent previously reached the corpus through a full RAG call, so each
+lookup cost an LLM round trip and returned a paraphrase. Nodes now query the
+retriever directly, which is both faster and better grounded.
 
-**7. Persistent ChromaDB Index**
-On first run, all documents are embedded and indexed (~30s). On subsequent startups, the persisted ChromaDB collection is reused instantly, avoiding the re-embedding cost that would otherwise cause Streamlit reloads.
+**7. A revision node on the fact-check loop**
+The retry previously re-checked the same unmodified draft, which could only
+ever produce the same verdict. `revise` rewrites the flagged claims first.
+
+**8. Failing closed on medical content**
+An unparseable fact-check response used to default to 0.75 and "grounded",
+silently clearing the safety gate. It now scores zero and flags for review.
+
+**9. Jobs in the database, not in a dict**
+Article jobs persist, survive restarts, and are swept to `failed` if the
+process died mid-run — rather than leaving a client polling forever.
 
 ---
 
@@ -585,13 +804,14 @@ On first run, all documents are embedded and indexed (~30s). On subsequent start
 
 | Requirement | Implementation |
 |---|---|
-| Part A: RAG with chunking | `src/rag_system.py` — adaptive chunking, ChromaDB (264 chunks), structured citations |
-| Part A: Q&A with citations | `answer_user_query()` returns `QueryResponse` with doc_id + section_id |
-| Part B: Multi-agent pipeline | `src/agent_workflow.py` — 4-agent orchestrator with shared key manager |
-| Part B: Fact-checking guardrail | `FactCheckerAgent` with 0.7 grounding threshold |
-| Evaluation framework | `src/evaluation.py` — golden set (5 queries), 4 metrics, JSONL history |
-| Benchmark report | See [Benchmark Report](#-benchmark-report) — full results with per-query analysis |
-| Web UI | `streamlit_app.py` — interactive demo with citations |
+| Part A: RAG with chunking | `backend/app/services/rag/` — adaptive parent/child chunking, hybrid retrieval, reranking |
+| Part A: Q&A with citations | `POST /api/v1/query` → `doc_id` + `section_id` + score per citation |
+| Part B: Multi-agent pipeline | `backend/app/services/agents/` — LangGraph graph with parallel section writes |
+| Part B: Fact-checking guardrail | `fact_check` node, 0.7 grounding threshold, real revision loop |
+| Evaluation framework | `scripts/evaluate.py`, 18-question golden set, four metrics |
+| Benchmark report | [Benchmark Report](#-benchmark-report) — full results and open issues |
+| Web UI | `streamlit_app.py` — thin client over the API |
+| Tests | 151 tests across unit and integration suites |
 
 ---
 
@@ -599,6 +819,6 @@ On first run, all documents are embedded and indexed (~30s). On subsequent start
 
 **Kerala Ayurveda RAG System** · Built for the Agentic AI Internship Assignment
 
-*Stack: Python 3.13 · MegaLLM (gemini-3-pro-preview) · Google Gemini 3.6 Flash · LangChain 1.2.8 · ChromaDB 1.4.1 · HuggingFace · Streamlit 1.54.0*
+*Stack: Python · FastAPI · LangGraph · Qdrant · bge-base-en-v1.5 · Gemini · Streamlit*
 
 </div>
