@@ -1,58 +1,51 @@
-# Multi-stage Dockerfile for Kerala Ayurveda RAG System
-# Optimized for production deployment
+# ── Streamlit UI Dockerfile ──
+#
+# The UI is a thin HTTP client over the API, so this image carries only
+# streamlit and requests. It used to install the full ML stack (torch,
+# sentence-transformers, chromadb, LangChain) because the UI ran retrieval
+# in-process — that was roughly 2.5 GB of image for a page of widgets.
+#
+# Point it at the backend with API_BASE_URL (docker-compose.yml sets it).
 
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
-    curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /app
-
-# Copy requirements and install dependencies
+WORKDIR /build
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# Final stage
+# ── Runtime stage ──
 FROM python:3.11-slim
 
-# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python dependencies from builder
-COPY --from=builder /root/.local /root/.local
+RUN useradd --create-home --shell /bin/bash appuser
 
-# Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
+COPY --from=builder /install /usr/local
 
-# Set working directory
 WORKDIR /app
 
-# Copy application code
-COPY . .
+# Only the UI entrypoint and its Streamlit config — no data, no source tree.
+COPY streamlit_app.py ./
+COPY .streamlit/ ./.streamlit/
 
-# Create directories for persistence
-RUN mkdir -p chroma_db data
+RUN chown -R appuser:appuser /app
+USER appuser
 
-# Expose Streamlit port
+ENV API_BASE_URL=http://api:8000
+
 EXPOSE 8501
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl --fail http://localhost:8501/_stcore/health || exit 1
 
-# Run Streamlit with production settings
 CMD ["streamlit", "run", "streamlit_app.py", \
      "--server.port=8501", \
      "--server.address=0.0.0.0", \
      "--server.headless=true", \
-     "--server.enableCORS=false", \
-     "--server.enableXsrfProtection=false", \
      "--browser.gatherUsageStats=false"]
-
