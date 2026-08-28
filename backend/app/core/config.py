@@ -64,12 +64,29 @@ class Settings(BaseSettings):
     google_api_key_1: Optional[str] = Field(default=None, description="Gemini key 1 for rotation")
     google_api_key_2: Optional[str] = Field(default=None, description="Gemini key 2 for rotation")
     google_api_key_3: Optional[str] = Field(default=None, description="Gemini key 3 for rotation")
-    gemini_model: str = Field(default="gemini-2.5-flash", description="Default Gemini model")
+    gemini_model: str = Field(
+        default="gemini-3.6-flash",
+        description=(
+            "Gemini fallback model. Was gemini-2.5-flash here while the legacy "
+            "path defaulted to gemini-3.6-flash; the two stacks answered the "
+            "same questions with different models. Unified on 3.6-flash. Note "
+            "2.5-flash still resolves for older API projects but is not served "
+            "to projects created after its deprecation."
+        )
+    )
 
     # LLM behavior
     llm_temperature: float = Field(default=0.1, description="Temperature for RAG answers (low = consistent)")
     llm_max_retries: int = Field(default=3, description="Max LLM API retries before giving up")
     llm_retry_delay: float = Field(default=2.0, description="Seconds between LLM retries")
+    llm_max_concurrency: int = Field(
+        default=3,
+        description=(
+            "Max simultaneous LLM calls. The article pipeline writes sections "
+            "in parallel; without a cap it can burn the Gemini free tier's "
+            "15 requests/minute in a single burst."
+        )
+    )
 
     # ── Embeddings ─────────────────────────────────────────────
     embedding_model: str = Field(
@@ -81,10 +98,30 @@ class Settings(BaseSettings):
         )
     )
     embedding_device: str = Field(default="cpu", description="Device for embeddings: 'cpu' or 'cuda'")
+    sparse_model: str = Field(
+        default="Qdrant/bm25",
+        description=(
+            "FastEmbed sparse model for keyword matching. Qdrant scores these "
+            "with real BM25 (IDF applied server-side via the collection's IDF "
+            "modifier), replacing the in-process Python BM25 index."
+        )
+    )
 
     # ── Vector Store ───────────────────────────────────────────
-    chroma_persist_dir: str = Field(default="./chroma_db", description="ChromaDB persistence directory")
-    chroma_collection_name: str = "ayurveda_rag"
+    qdrant_url: str = Field(
+        default="http://localhost:6333",
+        description=(
+            "Qdrant server URL. Use ':memory:' for an in-process instance "
+            "(tests) — it supports the same Query API including sparse vectors."
+        )
+    )
+    qdrant_collection: str = Field(
+        default="ayurveda_rag_v2",
+        description=(
+            "Collection name. Suffixed v2 to avoid colliding with the old "
+            "384-d Chroma-era collection during migration."
+        )
+    )
 
     # ── Retrieval ──────────────────────────────────────────────
     retrieval_top_k: int = Field(default=10, description="How many chunks to retrieve from vector search")
@@ -98,8 +135,10 @@ class Settings(BaseSettings):
             "for ranking but too slow for initial retrieval."
         )
     )
-    bm25_weight: float = Field(default=0.3, description="Weight for BM25 in hybrid search (0=pure semantic, 1=pure keyword)")
-    semantic_weight: float = Field(default=0.7, description="Weight for semantic search in hybrid search")
+    # Note: hybrid fusion is Reciprocal Rank Fusion, computed by Qdrant.
+    # RRF is rank-based and parameter-free, so there are no dense/sparse
+    # weights to tune. (The former bm25_weight/semantic_weight settings were
+    # never read by any code path.)
 
     # ── Chunking ───────────────────────────────────────────────
     chunk_size_faq: int = 400

@@ -27,26 +27,30 @@ In tests, you pass mock objects. In production, you pass real ones.
 The pipeline doesn't know or care which.
 """
 
+import asyncio
 import logging
 import time
-from pathlib import Path
-from typing import Dict, List, Optional
-
-import chromadb
-from langchain_community.vectorstores import Chroma
+from typing import Optional
 
 from backend.app.core.config import get_settings
 from backend.app.core.logging import LogTimer
 from backend.app.services.llm import LLMProvider
 from backend.app.services.cache import ResponseCache
-from backend.app.services.rag.embeddings import get_embeddings
-from backend.app.services.rag.chunker import load_all_documents
-from backend.app.services.rag.retriever import HybridRetriever, BM25Index
+from backend.app.services.ingestion.service import ingest
+from backend.app.services.rag.embeddings import get_dense_embedder
+from backend.app.services.rag.retriever import HybridRetriever
+from backend.app.services.rag.vectorstore import QdrantStore, get_qdrant_client
 from backend.app.services.rag.generator import (
-    generate_answer, QueryResponse, Citation, build_context,
+    agenerate_answer, generate_answer, QueryResponse, Citation,
 )
 
 logger = logging.getLogger(__name__)
+
+NO_RESULTS_ANSWER = (
+    "I couldn't find relevant information in the knowledge base to answer this "
+    "question. Please try rephrasing or ask about Kerala Ayurveda products, "
+    "treatments, or concepts."
+)
 
 
 class RAGPipeline:
@@ -66,166 +70,161 @@ class RAGPipeline:
         self.settings = get_settings()
         self.llm_provider = LLMProvider()
         self.cache = ResponseCache()
-        self.vectorstore = None
+        self.store: Optional[QdrantStore] = None
         self.retriever: Optional[HybridRetriever] = None
-        self.bm25_index: Optional[BM25Index] = None
-        self.parent_chunks: Dict[str, str] = {}
+        self.index_version: int = 0
+        self.chunk_count: int = 0
         self._initialized = False
 
     def initialize(self, force_reindex: bool = False) -> None:
         """
         Initialize the RAG pipeline.
 
-        This:
-        1. Loads the embedding model
-        2. Either loads existing ChromaDB index or builds from scratch
-        3. Builds BM25 index for keyword search
-        4. Creates the hybrid retriever
+        1. Load the dense embedding model (determines the vector dimension)
+        2. Ensure the Qdrant collection exists with dense + sparse vectors
+        3. Assert the live collection matches the configured model
+        4. Run incremental ingestion (unchanged files are skipped)
+        5. Create the hybrid retriever
 
         Called once at application startup via FastAPI lifespan.
+
+        Note there is no "reuse existing index" fast path any more. Ingestion
+        is now incremental and hash-based, so an unchanged corpus costs a few
+        file hashes rather than a full re-embed — and unlike the old fast path,
+        it can't silently serve an index built by a different model.
         """
         with LogTimer(logger, "rag_initialization"):
-            embeddings = get_embeddings()
+            embedder = get_dense_embedder()
 
-            persist_path = str(Path(self.settings.chroma_persist_dir).resolve())
-            Path(persist_path).mkdir(parents=True, exist_ok=True)
-            chroma_client = chromadb.PersistentClient(path=persist_path)
+            self.store = QdrantStore(
+                client=get_qdrant_client(),
+                collection=self.settings.qdrant_collection,
+                dense_dim=embedder.dim,
+                embedding_model=self.settings.embedding_model,
+                sparse_model=self.settings.sparse_model,
+            )
 
-            # ── Try to reuse existing index ──
-            if not force_reindex:
-                try:
-                    existing = chroma_client.get_collection(self.settings.chroma_collection_name)
-                    count = existing.count()
-                    if count > 0:
-                        logger.info(
-                            f"Reusing existing ChromaDB index ({count} chunks)",
-                            extra={"component": "rag", "chunk_count": count}
-                        )
-                        self.vectorstore = Chroma(
-                            client=chroma_client,
-                            collection_name=self.settings.chroma_collection_name,
-                            embedding_function=embeddings,
-                        )
-                        self._build_bm25_from_vectorstore()
-                        self._initialized = True
-                        return
-                except Exception:
-                    pass  # Collection doesn't exist — build from scratch
+            if force_reindex:
+                logger.info(
+                    "Force reindex requested — dropping collection",
+                    extra={"component": "rag"},
+                )
+                self.store.drop_collection()
 
-            # ── Build index from scratch ──
-            self._build_index(chroma_client, embeddings)
+            created = self.store.ensure_collection()
+            if not created:
+                # Fails loudly rather than serving a mismatched vector space.
+                self.store.assert_compatible()
+
+            stats = ingest(
+                store=self.store,
+                content_dir=self.settings.content_path,
+                force=force_reindex,
+            )
+
+            self.index_version = stats.index_version
+            self.chunk_count = self.store.count()
+            self.cache.set_index_version(self.index_version)
+
+            self.retriever = HybridRetriever(store=self.store)
             self._initialized = True
 
-    def _build_index(self, chroma_client, embeddings) -> None:
-        """Build the complete index from source documents."""
-        logger.info(
-            "Building vector index from scratch...",
-            extra={"component": "rag"}
-        )
+            logger.info(
+                f"RAG pipeline ready: {self.chunk_count} chunks, index v{self.index_version}",
+                extra={
+                    "component": "rag",
+                    "chunk_count": self.chunk_count,
+                    "index_version": self.index_version,
+                },
+            )
 
-        content_dir = self.settings.content_path
-        if not content_dir.exists():
-            raise FileNotFoundError(f"Content directory not found: {content_dir}")
+    async def aquery(self, user_query: str, use_cache: bool = True) -> QueryResponse:
+        """
+        Async entry point — what the API routes call.
 
-        # Load and chunk all documents
-        chunk_result = load_all_documents(content_dir)
+        Retrieval is CPU-bound (embedding the query, then cross-encoder
+        reranking) and runs on a worker thread; generation is network-bound
+        and uses the provider's native async path. The previous `query()` did
+        all of this inline in an async route, so a single request blocked the
+        event loop for the whole LLM round trip and no other request could be
+        served meanwhile.
+        """
+        if not self._initialized:
+            raise RuntimeError("RAG pipeline not initialized. Call initialize() first.")
 
-        if not chunk_result.chunks:
-            raise ValueError(f"No documents found in {content_dir}")
+        start_time = time.perf_counter()
 
-        # Store parent chunks for context expansion
-        for parent_doc in chunk_result.parent_chunks:
-            parent_id = parent_doc.metadata.get("parent_chunk_id")
-            if parent_id:
-                self.parent_chunks[parent_id] = parent_doc.page_content
+        if use_cache:
+            cached = self.cache.get_response(user_query)
+            if cached:
+                logger.info(
+                    f"Cache HIT for query: {user_query[:60]}",
+                    extra={"component": "rag", "cache_hit": True},
+                )
+                return QueryResponse(
+                    answer=cached["answer"],
+                    citations=[Citation(**c) for c in cached["citations"]],
+                    retrieved_chunks=cached.get("retrieved_chunks", []),
+                    cache_hit=True,
+                    latency_ms=(time.perf_counter() - start_time) * 1000,
+                )
 
-        # Index child chunks into ChromaDB
-        logger.info(
-            f"Embedding and indexing {len(chunk_result.chunks)} chunks...",
-            extra={"component": "rag"}
-        )
+        with LogTimer(logger, "retrieval", query=user_query[:100]):
+            chunks = await asyncio.to_thread(self.retriever.retrieve, user_query)
 
-        # Delete existing collection if rebuilding
-        try:
-            chroma_client.delete_collection(self.settings.chroma_collection_name)
-        except Exception:
-            pass
+        if not chunks:
+            logger.warning(
+                f"No chunks retrieved for query: {user_query[:60]}",
+                extra={"component": "rag"},
+            )
+            return QueryResponse(
+                answer=NO_RESULTS_ANSWER,
+                citations=[],
+                retrieved_chunks=[],
+                latency_ms=(time.perf_counter() - start_time) * 1000,
+            )
 
-        self.vectorstore = Chroma.from_documents(
-            documents=chunk_result.chunks,
-            embedding=embeddings,
-            client=chroma_client,
-            collection_name=self.settings.chroma_collection_name,
-        )
+        with LogTimer(logger, "generation", query=user_query[:100]):
+            response = await agenerate_answer(user_query, chunks, self.llm_provider)
 
-        # Build BM25 index from the same chunks
-        self.bm25_index = BM25Index()
-        self.bm25_index.index(chunk_result.chunks)
+        response.latency_ms = (time.perf_counter() - start_time) * 1000
 
-        # Create hybrid retriever
-        self.retriever = HybridRetriever(
-            vectorstore=self.vectorstore,
-            bm25_index=self.bm25_index,
-            parent_chunks=self.parent_chunks,
-        )
-
-        logger.info(
-            f"Index built: {chunk_result.total_chunks} child chunks, "
-            f"{chunk_result.total_parent_chunks} parent chunks",
-            extra={"component": "rag"}
-        )
-
-        # Invalidate cache since documents changed
-        self.cache.invalidate_all()
-
-    def _build_bm25_from_vectorstore(self) -> None:
-        """Build BM25 index from existing ChromaDB collection."""
-        logger.info("Building BM25 index from existing vectorstore...",
-                     extra={"component": "rag"})
-
-        # Get all documents from ChromaDB
-        collection = self.vectorstore._collection
-        results = collection.get(include=["documents", "metadatas"])
-
-        from langchain_core.documents import Document
-
-        documents = []
-        for text, metadata in zip(results["documents"], results["metadatas"]):
-            doc = Document(page_content=text, metadata=metadata or {})
-            documents.append(doc)
-
-            # Build parent chunks map
-            parent_id = (metadata or {}).get("parent_chunk_id")
-            if parent_id and (metadata or {}).get("is_parent"):
-                self.parent_chunks[parent_id] = text
-
-        self.bm25_index = BM25Index()
-        self.bm25_index.index(documents)
-
-        self.retriever = HybridRetriever(
-            vectorstore=self.vectorstore,
-            bm25_index=self.bm25_index,
-            parent_chunks=self.parent_chunks,
-        )
+        if use_cache:
+            self.cache.set_response(user_query, self._cache_payload(response))
 
         logger.info(
-            f"BM25 index built from {len(documents)} existing chunks",
-            extra={"component": "rag"}
+            f"Query answered in {response.latency_ms:.0f}ms: {user_query[:60]}",
+            extra={
+                "component": "rag",
+                "latency_ms": response.latency_ms,
+                "chunks_retrieved": len(chunks),
+                "citations": len(response.citations),
+            },
         )
+        return response
+
+    @staticmethod
+    def _cache_payload(response: QueryResponse) -> dict:
+        return {
+            "answer": response.answer,
+            "citations": [
+                {
+                    "doc_id": c.doc_id,
+                    "section_id": c.section_id,
+                    "content_snippet": c.content_snippet,
+                    "relevance_score": c.relevance_score,
+                }
+                for c in response.citations
+            ],
+            "retrieved_chunks": response.retrieved_chunks[:5],
+        }
 
     def query(self, user_query: str, use_cache: bool = True) -> QueryResponse:
         """
-        Answer a user query using the full RAG pipeline.
+        Synchronous query path.
 
-        This is the main entry point — equivalent to the original
-        AyurvedaRAGSystem.answer_user_query().
-
-        Steps:
-          1. Check response cache
-          2. Hybrid retrieval (semantic + BM25 + reranking)
-          3. LLM answer generation
-          4. Cache the response
-          5. Return structured QueryResponse
+        Retained for scripts and evaluation that run outside an event loop.
+        Request handlers should call `aquery` instead.
 
         Args:
             user_query: The user's question
@@ -262,8 +261,7 @@ class RAGPipeline:
                 extra={"component": "rag"}
             )
             return QueryResponse(
-                answer="I couldn't find relevant information in the knowledge base to answer this question. "
-                       "Please try rephrasing or ask about Kerala Ayurveda products, treatments, or concepts.",
+                answer=NO_RESULTS_ANSWER,
                 citations=[],
                 retrieved_chunks=[],
                 latency_ms=(time.perf_counter() - start_time) * 1000,
@@ -277,20 +275,7 @@ class RAGPipeline:
 
         # ── Step 4: Cache the response ──
         if use_cache:
-            cache_data = {
-                "answer": response.answer,
-                "citations": [
-                    {
-                        "doc_id": c.doc_id,
-                        "section_id": c.section_id,
-                        "content_snippet": c.content_snippet,
-                        "relevance_score": c.relevance_score,
-                    }
-                    for c in response.citations
-                ],
-                "retrieved_chunks": response.retrieved_chunks[:5],  # Limit stored chunks
-            }
-            self.cache.set_response(user_query, cache_data)
+            self.cache.set_response(user_query, self._cache_payload(response))
 
         logger.info(
             f"Query answered in {response.latency_ms:.0f}ms: {user_query[:60]}",
@@ -304,27 +289,49 @@ class RAGPipeline:
 
         return response
 
+    def sync(self, force: bool = False) -> dict:
+        """
+        Bring the index in sync with the content directory.
+
+        By default this is incremental: files whose hash is unchanged are
+        skipped without re-embedding. Pass force=True to rebuild everything
+        from scratch (needed after changing the embedding model).
+        """
+        if force:
+            logger.info("Force reindexing all documents...", extra={"component": "rag"})
+            self.initialize(force_reindex=True)
+            return {
+                "status": "completed",
+                "mode": "full_rebuild",
+                "chunks_indexed": self.chunk_count,
+                "index_version": self.index_version,
+            }
+
+        if not self._initialized:
+            raise RuntimeError("RAG pipeline not initialized. Call initialize() first.")
+
+        logger.info("Incremental reindex...", extra={"component": "rag"})
+        stats = ingest(store=self.store, content_dir=self.settings.content_path)
+
+        self.index_version = stats.index_version
+        self.chunk_count = self.store.count()
+        self.cache.set_index_version(self.index_version)
+
+        return {"status": "completed", "mode": "incremental", **stats.as_dict()}
+
+    # Kept for backwards compatibility with the existing /reindex route.
     def reindex(self) -> dict:
-        """
-        Force re-index all documents.
-        Returns statistics about the reindexing.
-        """
-        logger.info("Force reindexing all documents...", extra={"component": "rag"})
-        self.initialize(force_reindex=True)
-        return {
-            "status": "completed",
-            "chunks_indexed": self.bm25_index.n_docs if self.bm25_index else 0,
-            "parent_chunks": len(self.parent_chunks),
-            "cache_cleared": True,
-        }
+        return self.sync(force=True)
 
     @property
     def stats(self) -> dict:
         """Pipeline statistics for health checks."""
         return {
             "initialized": self._initialized,
-            "chunks_indexed": self.bm25_index.n_docs if self.bm25_index else 0,
-            "parent_chunks": len(self.parent_chunks),
+            "chunks_indexed": self.chunk_count,
+            "index_version": self.index_version,
+            "collection": self.settings.qdrant_collection,
+            "embedding_model": self.settings.embedding_model,
             "cache": self.cache.stats,
             "llm": self.llm_provider.status(),
         }

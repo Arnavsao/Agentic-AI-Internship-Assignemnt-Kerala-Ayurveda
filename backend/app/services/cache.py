@@ -148,6 +148,7 @@ class ResponseCache:
             ttl_seconds=settings.cache_ttl_seconds,
         )
         self._redis = None
+        self._index_version = 0
 
         # Try to connect to Redis if configured
         if settings.redis_url:
@@ -168,11 +169,44 @@ class ResponseCache:
                 extra={"component": "cache"}
             )
 
+    def set_index_version(self, version: int) -> None:
+        """
+        Point the cache at an index generation.
+
+        Cache keys embed this version, so re-indexing automatically orphans
+        every previously cached answer instead of serving stale results built
+        from documents that have since changed. Old entries age out via TTL.
+        """
+        if version != self._index_version:
+            logger.info(
+                f"Cache namespace moved to index v{version}",
+                extra={"component": "cache", "index_version": version},
+            )
+            self._index_version = version
+            self._memory_cache.clear()
+
     def _make_key(self, query: str) -> str:
-        """Generate a cache key from the query."""
-        # Normalize: lowercase, strip whitespace
+        """
+        Build a cache key.
+
+        The key covers everything that changes what a correct answer looks
+        like: the index generation, the embedding and reranker models, and the
+        retrieval depth — not just the query text. Keying on query text alone
+        (the previous behaviour) meant that swapping the embedding model or
+        re-indexing kept serving answers produced by the old configuration.
+        """
+        settings = get_settings()
         normalized = query.strip().lower()
-        return f"rag:response:{hashlib.sha256(normalized.encode()).hexdigest()[:16]}"
+        fingerprint = "|".join([
+            settings.embedding_model,
+            settings.reranker_model,
+            str(settings.retrieval_top_k),
+            str(settings.retrieval_top_n),
+            str(settings.retrieval_context_n),
+            normalized,
+        ])
+        digest = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
+        return f"rag:v{self._index_version}:{digest}"
 
     def get_response(self, query: str) -> Optional[dict]:
         """
@@ -232,10 +266,11 @@ class ResponseCache:
         self._memory_cache.clear()
         if self._redis:
             try:
-                # Delete all keys matching our prefix
-                keys = self._redis.keys("rag:response:*")
-                if keys:
-                    self._redis.delete(*keys)
+                # SCAN, not KEYS: KEYS blocks the Redis event loop for the
+                # duration of a full keyspace walk, which stalls every other
+                # client. SCAN yields in bounded batches.
+                for key in self._redis.scan_iter(match="rag:v*", count=500):
+                    self._redis.delete(key)
             except Exception as e:
                 logger.warning(f"Redis invalidation failed: {e}", extra={"component": "cache"})
 

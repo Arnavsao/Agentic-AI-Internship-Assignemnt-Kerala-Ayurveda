@@ -55,6 +55,24 @@ class QueryResponse:
 # Preserved from original with minor improvements for clarity
 SYSTEM_PROMPT = """You are an expert assistant for Kerala Ayurveda. Answer questions using ONLY the provided context.
 
+GROUNDING — this is the most important rule:
+You almost certainly know more about Ayurveda than the sources contain. Do not
+use any of it. Your knowledge of Ayurveda is NOT a valid source here; only the
+text below the "Context" heading is.
+
+- Every factual statement must trace to a specific source, cited [Source X].
+- Do NOT add related concepts, mechanisms, Sanskrit terms, dosha associations,
+  or examples that the sources do not state, even if they are correct and
+  would make the answer richer.
+- Do NOT elaborate on how or why something works unless a source explains it.
+- If the sources cover only part of the question, answer that part and say
+  plainly what they do not cover.
+- If the sources do not answer the question at all, say so. Do not substitute
+  general knowledge.
+
+A short answer that stays inside the sources is CORRECT.
+A fuller, more helpful answer that adds outside knowledge is WRONG.
+
 Style guidelines:
 - Warm & reassuring, like a calm practitioner
 - Grounded & precise — no vague claims
@@ -63,11 +81,8 @@ Style guidelines:
 - Always include gentle safety notes when relevant
 - Encourage consultation with qualified practitioners
 
-IMPORTANT:
-- Only use information from the provided sources
-- If the answer isn't in the sources, say so clearly
-- Include specific citations in your answer using [Source X] notation
-- Be concise but complete"""
+Before finishing, re-read your answer and delete any sentence you cannot point
+to a source for."""
 
 USER_PROMPT = """Context from Kerala Ayurveda knowledge base:
 
@@ -99,6 +114,65 @@ def build_context(chunks: List[RetrievedChunk], use_parent: bool = True) -> str:
         )
 
     return "\n---\n".join(context_parts)
+
+
+def _build_messages(query: str, context: str) -> list:
+    """Chat messages for the RAG answer prompt."""
+    return [
+        ("system", SYSTEM_PROMPT),
+        ("user", USER_PROMPT.format(context=context, query=query)),
+    ]
+
+
+def _build_response(
+    chunks: List[RetrievedChunk],
+    top_chunks: List[RetrievedChunk],
+    answer: str,
+) -> QueryResponse:
+    """Assemble the response object and its citations."""
+    settings = get_settings()
+    citations = [
+        Citation(
+            doc_id=chunk.doc_id,
+            section_id=chunk.section_id,
+            content_snippet=chunk.document.page_content[:200] + "...",
+            relevance_score=chunk.final_score,
+        )
+        for chunk in top_chunks
+    ]
+    return QueryResponse(
+        answer=answer,
+        citations=citations,
+        retrieved_chunks=[c.document.page_content for c in chunks],
+        model_used=settings.gemini_model,
+    )
+
+
+async def agenerate_answer(
+    query: str,
+    chunks: List[RetrievedChunk],
+    llm_provider: LLMProvider,
+    context_n: Optional[int] = None,
+) -> QueryResponse:
+    """
+    Async answer generation — the path API request handlers use.
+
+    Goes through the gateway's `agenerate`, so the configured temperature
+    reaches whichever provider serves the call. The sync path below builds its
+    own chain and relies on `invoke_with_rotation`.
+    """
+    settings = get_settings()
+    context_n = context_n or settings.retrieval_context_n
+    top_chunks = chunks[:context_n]
+    context = build_context(top_chunks, use_parent=True)
+
+    with LogTimer(logger, "llm_generation", query=query[:100]):
+        answer = await llm_provider.agenerate(
+            _build_messages(query, context),
+            temperature=settings.llm_temperature,
+        )
+
+    return _build_response(chunks, top_chunks, answer)
 
 
 def generate_answer(

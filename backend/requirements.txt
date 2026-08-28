@@ -28,8 +28,12 @@ langchain-huggingface>=0.1.0
 google-generativeai>=0.8.0
 
 # ── Embeddings & Vector Store ──
-chromadb>=0.5.0
-sentence-transformers>=3.0.0  # For embedding models AND cross-encoder reranking
+# qdrant-client[fastembed] brings both the Qdrant driver and FastEmbed, which
+# supplies the Qdrant/bm25 sparse model. Sparse vectors are what let Qdrant do
+# keyword search and RRF fusion server-side, replacing the in-process BM25
+# index that had to be rebuilt from a full collection scan at every startup.
+qdrant-client[fastembed]>=1.12.0
+sentence-transformers>=3.0.0  # Dense embeddings AND cross-encoder reranking
 # Note: sentence-transformers pulls in torch (~2GB). For a leaner deployment,
 # you could use the ONNX runtime version instead.
 
