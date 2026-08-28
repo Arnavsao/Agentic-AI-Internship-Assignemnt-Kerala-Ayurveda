@@ -1,36 +1,48 @@
 """
-LLM Provider Manager — Resilient Multi-Provider Access
-=========================================================
+LLM Gateway — Multi-Provider Access with Key Rotation
+=======================================================
 
-WHY THIS IS A REFACTOR (not a rewrite):
-Your original key_manager.py had the right idea — MegaLLM first, Gemini fallback
-with key rotation. This refactored version keeps that logic but improves:
+Single entry point for every LLM call in the system: MegaLLM first, then
+Gemini with automatic key rotation on quota exhaustion.
 
-1. CONFIGURATION: Uses the centralized Settings instead of scattered os.getenv()
-2. TYPING: Proper type hints and Pydantic response models
-3. LOGGING: Structured logging instead of print() — you can trace which key was
-   used for which request, when rotation happened, and why
-4. RESPONSE NORMALIZATION: Your original response_text() function is preserved
-   but moved here as a method
-5. ASYNC SUPPORT: Adds async invoke methods for use with FastAPI
+FOUR BUGS THIS FIXES, all of which were silent:
 
-TEACHING POINT — Why key rotation matters at scale:
-Free Gemini API keys have a 15 RPM (requests per minute) limit.
-With 4 agents × 3 RAG calls each = 12 LLM calls per article.
-One user generating one article nearly exhausts a single key.
-With 10 concurrent users, you need 10+ keys or a paid tier.
-Key rotation is a bridge between "free tier prototype" and
-"paid production API" — it lets you scale the prototype further
-before committing to paid infrastructure.
+1. DROPPED GENERATION PARAMETERS.
+   `invoke_with_rotation` built the MegaLLM client with no arguments, so
+   whenever MegaLLM was configured (the default), every caller's temperature
+   and model choice was discarded. The fact-checker asked for temperature 0.0
+   and got the provider default; the outline agent asked for 0.3 and got the
+   same thing. Per-agent tuning only ever took effect on the Gemini fallback
+   path. `generate()` now threads parameters through whichever provider wins.
+
+2. UNSAFE ROTATION UNDER CONCURRENCY.
+   `_gemini_index` was mutated without a lock. Two requests rotating at once
+   could skip a key or land on the same exhausted one. Now guarded.
+
+3. BLOCKING SLEEP ON THE EVENT LOOP.
+   Retry backoff used `time.sleep`, which stalls every other request in the
+   process when called from an async handler. The async path uses
+   `asyncio.sleep`.
+
+4. NO CONCURRENCY LIMIT.
+   Gemini's free tier allows 15 requests/minute. Once the article pipeline
+   started fanning out section writes in parallel, nothing stopped it from
+   issuing them all at once and burning the whole quota in one burst. A
+   semaphore now bounds in-flight calls.
 """
 
+import asyncio
 import logging
+import threading
 import time
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from backend.app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# A message is either a LangChain BaseMessage or a (role, content) tuple.
+MessageLike = Union[Tuple[str, str], Any]
 
 
 class LLMProviderError(Exception):
@@ -40,13 +52,11 @@ class LLMProviderError(Exception):
 
 def response_text(response: Any) -> str:
     """
-    Normalize LLM response to plain text.
+    Normalize an LLM response to plain text.
 
-    Gemini 3.x returns .content as a list of typed blocks
+    Gemini 3.x returns `.content` as a list of typed blocks
     ([{"type": "text", "text": ...}, ...]) rather than a bare string.
-    This handles all known response formats.
-
-    Preserved from the original key_manager.py — this is battle-tested.
+    Handles every response shape the providers emit.
     """
     content = getattr(response, "content", response)
 
@@ -69,30 +79,22 @@ def response_text(response: Any) -> str:
 
 class LLMProvider:
     """
-    Manages LLM access with automatic provider failover and key rotation.
+    LLM access with provider failover and Gemini key rotation.
 
-    Architecture:
-        1. Try MegaLLM (if configured) — OpenAI-compatible, fast, cheap
-        2. If MegaLLM fails → fall back to Gemini with key rotation
-        3. If all Gemini keys exhausted → raise LLMProviderError
-
-    Usage:
         provider = LLMProvider()
 
-        # Simple call (auto-selects provider):
-        llm = provider.create_llm(temperature=0.1)
-
-        # Resilient call with rotation:
-        result = provider.invoke_with_rotation(create_fn, invoke_fn)
+        # Preferred: parameters actually reach the provider
+        text = provider.generate([("system", "..."), ("user", "...")], temperature=0.0)
+        text = await provider.agenerate(messages, temperature=0.2)
     """
 
-    # Error patterns that indicate quota/rate-limit exhaustion
+    # Errors meaning "this key is out of quota" — rotate and retry.
     EXHAUSTION_SIGNALS = [
         "resourceexhausted", "429", "quota", "rate limit",
         "too many requests", "resource has been exhausted",
     ]
 
-    # Error patterns that indicate a permanently bad key
+    # Errors meaning "this key will never work" — rotate without backoff.
     KEY_UNUSABLE_SIGNALS = [
         "permission_denied", "403", "not_found", "404",
         "api key not valid", "invalid api key", "unauthenticated", "401",
@@ -104,6 +106,15 @@ class LLMProvider:
         self._gemini_keys: List[str] = settings.gemini_keys
         self._gemini_index: int = 0
         self._settings = settings
+
+        # Guards _gemini_index. Never held across an await or a network call.
+        self._rotation_lock = threading.Lock()
+
+        # Bounds in-flight LLM calls so parallel agent nodes can't exhaust the
+        # free-tier RPM allowance in a single burst. Created lazily because an
+        # asyncio.Semaphore binds to the running loop.
+        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
 
         if not self._mega_key and not self._gemini_keys:
             raise LLMProviderError(
@@ -119,136 +130,262 @@ class LLMProvider:
 
         logger.info(
             f"LLM providers initialized: {', '.join(providers)}",
-            extra={"component": "llm"}
+            extra={"component": "llm"},
         )
+
+    # ── Key management ──────────────────────────────────────────
 
     @property
     def current_gemini_key(self) -> str:
         if not self._gemini_keys:
             raise LLMProviderError("No Gemini keys available")
-        return self._gemini_keys[self._gemini_index]
+        with self._rotation_lock:
+            return self._gemini_keys[self._gemini_index]
 
     def rotate_gemini_key(self) -> Optional[str]:
-        """Rotate to next Gemini key. Returns new key or None if only one."""
-        if len(self._gemini_keys) <= 1:
-            return None
-        next_idx = (self._gemini_index + 1) % len(self._gemini_keys)
-        if next_idx == self._gemini_index:
-            return None
-        self._gemini_index = next_idx
-        new_key = self._gemini_keys[self._gemini_index]
+        """Advance to the next Gemini key. None if there's nowhere to go."""
+        with self._rotation_lock:
+            if len(self._gemini_keys) <= 1:
+                return None
+            self._gemini_index = (self._gemini_index + 1) % len(self._gemini_keys)
+            new_key = self._gemini_keys[self._gemini_index]
+            index = self._gemini_index + 1
+            total = len(self._gemini_keys)
+
         logger.warning(
-            f"Rotated to Gemini key {self._gemini_index + 1}/{len(self._gemini_keys)}",
-            extra={"component": "llm"}
+            f"Rotated to Gemini key {index}/{total}",
+            extra={"component": "llm"},
         )
         return new_key
 
     def _is_exhaustion_error(self, error: Exception) -> bool:
-        error_str = str(error).lower()
-        return any(signal in error_str for signal in self.EXHAUSTION_SIGNALS)
+        s = str(error).lower()
+        return any(sig in s for sig in self.EXHAUSTION_SIGNALS)
 
     def _is_key_unusable_error(self, error: Exception) -> bool:
-        error_str = str(error).lower()
-        return any(signal in error_str for signal in self.KEY_UNUSABLE_SIGNALS)
+        s = str(error).lower()
+        return any(sig in s for sig in self.KEY_UNUSABLE_SIGNALS)
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Per-event-loop semaphore capping concurrent LLM calls."""
+        loop = asyncio.get_running_loop()
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self._settings.llm_max_concurrency)
+            self._semaphore_loop = loop
+        return self._semaphore
+
+    # ── Client construction ─────────────────────────────────────
 
     def create_mega_llm(self, **kwargs):
-        """Create an OpenAI-compatible LLM pointed at MegaLLM."""
+        """OpenAI-compatible client pointed at MegaLLM."""
         from langchain_openai import ChatOpenAI
+        kwargs.setdefault("model", self._settings.mega_model)
         return ChatOpenAI(
-            model=self._settings.mega_model,
             api_key=self._mega_key,
             base_url=self._settings.mega_base_url,
             **kwargs,
         )
 
     def create_gemini_llm(self, api_key: Optional[str] = None, **kwargs):
-        """Create a Gemini LLM with specified or current key."""
+        """Gemini client using the given key, or the current one."""
         from langchain_google_genai import ChatGoogleGenerativeAI
-        key = api_key or self.current_gemini_key
+        kwargs.setdefault("model", self._settings.gemini_model)
         return ChatGoogleGenerativeAI(
-            model=self._settings.gemini_model,
-            google_api_key=key,
+            google_api_key=api_key or self.current_gemini_key,
             **kwargs,
         )
 
     def create_llm(self, **kwargs):
-        """Create the best available LLM (MegaLLM preferred, Gemini fallback)."""
+        """Best available client (MegaLLM preferred)."""
         if self._mega_key:
             return self.create_mega_llm(**kwargs)
         return self.create_gemini_llm(**kwargs)
 
-    def invoke_with_rotation(
+    @staticmethod
+    def _llm_kwargs(temperature: Optional[float], model: Optional[str]) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if model is not None:
+            kwargs["model"] = model
+        return kwargs
+
+    # ── Primary API ─────────────────────────────────────────────
+
+    def generate(
         self,
-        create_llm_fn: Callable[[str], Any],
-        invoke_fn: Callable[[Any], Any],
+        messages: Sequence[MessageLike],
+        *,
+        temperature: Optional[float] = None,
+        model: Optional[str] = None,
         max_retries: Optional[int] = None,
-        retry_delay: Optional[float] = None,
-    ) -> Any:
+    ) -> str:
         """
-        Invoke an LLM call with automatic failover and key rotation.
+        Run a chat completion and return plain text.
 
-        This is the primary method for all LLM calls in the system.
-        It provides resilience against:
-          - MegaLLM downtime → falls back to Gemini
-          - Gemini quota exhaustion → rotates to next key
-          - Permanent key issues (revoked, invalid) → skips to next key
-
-        Args:
-            create_llm_fn: Factory function that takes an API key and returns an LLM
-            invoke_fn: Function that takes an LLM and returns a response
-            max_retries: Max Gemini keys to try (default: all available)
-            retry_delay: Seconds between retries (default: from config)
+        Unlike the old `invoke_with_rotation`, temperature and model reach the
+        provider that actually serves the request — including MegaLLM.
         """
+        kwargs = self._llm_kwargs(temperature, model)
+        response = self.invoke_with_rotation(
+            create_llm_fn=lambda key: self.create_gemini_llm(api_key=key, **kwargs),
+            invoke_fn=lambda llm: llm.invoke(list(messages)),
+            llm_kwargs=kwargs,
+            max_retries=max_retries,
+        )
+        return response_text(response)
+
+    async def agenerate(
+        self,
+        messages: Sequence[MessageLike],
+        *,
+        temperature: Optional[float] = None,
+        model: Optional[str] = None,
+        max_retries: Optional[int] = None,
+    ) -> str:
+        """
+        Async chat completion.
+
+        Concurrency-limited and non-blocking: retry backoff uses asyncio.sleep
+        so waiting on one exhausted key doesn't stall the whole event loop.
+        """
+        async with self._get_semaphore():
+            return await self._agenerate_unlimited(
+                messages, temperature=temperature, model=model, max_retries=max_retries
+            )
+
+    async def _agenerate_unlimited(
+        self,
+        messages: Sequence[MessageLike],
+        *,
+        temperature: Optional[float] = None,
+        model: Optional[str] = None,
+        max_retries: Optional[int] = None,
+    ) -> str:
         settings = self._settings
-        if max_retries is None:
-            max_retries = len(self._gemini_keys)
-        if retry_delay is None:
-            retry_delay = settings.llm_retry_delay
+        kwargs = self._llm_kwargs(temperature, model)
+        payload = list(messages)
+        retry_delay = settings.llm_retry_delay
 
-        # ── Try MegaLLM first ──
+        if max_retries is None:
+            max_retries = max(len(self._gemini_keys), 1)
+
+        # ── MegaLLM first ──
         if self._mega_key:
             try:
-                mega_llm = self.create_mega_llm()
-                result = invoke_fn(mega_llm)
+                llm = self.create_mega_llm(**kwargs)
+                result = await llm.ainvoke(payload)
                 logger.debug("MegaLLM call succeeded", extra={"component": "llm"})
-                return result
+                return response_text(result)
             except Exception as e:
                 logger.warning(
                     f"MegaLLM failed: {e}. Falling back to Gemini.",
-                    extra={"component": "llm"}
+                    extra={"component": "llm"},
                 )
 
-        # ── Fall back to Gemini with key rotation ──
         if not self._gemini_keys:
             raise LLMProviderError("MegaLLM failed and no Gemini keys configured.")
 
-        last_error = None
+        # ── Gemini with rotation ──
+        last_error: Optional[Exception] = None
         keys_tried: set = set()
 
-        for attempt in range(max_retries):
+        for _ in range(max_retries):
             key = self.current_gemini_key
             if key in keys_tried:
                 break
             keys_tried.add(key)
 
             try:
-                llm = create_llm_fn(key)
-                return invoke_fn(llm)
+                llm = self.create_gemini_llm(api_key=key, **kwargs)
+                result = await llm.ainvoke(payload)
+                return response_text(result)
             except Exception as e:
                 exhausted = self._is_exhaustion_error(e)
-                if exhausted or self._is_key_unusable_error(e):
-                    reason = "exhausted" if exhausted else "unusable"
-                    logger.warning(
-                        f"Gemini key {self._gemini_index + 1} {reason}: {e}",
-                        extra={"component": "llm"}
-                    )
-                    last_error = e
-                    if self.rotate_gemini_key() is None:
-                        break
-                    if exhausted and retry_delay > 0:
-                        time.sleep(retry_delay)
-                else:
+                if not (exhausted or self._is_key_unusable_error(e)):
                     raise
+                logger.warning(
+                    f"Gemini key {'exhausted' if exhausted else 'unusable'}: {e}",
+                    extra={"component": "llm"},
+                )
+                last_error = e
+                if self.rotate_gemini_key() is None:
+                    break
+                if exhausted and retry_delay > 0:
+                    await asyncio.sleep(retry_delay)
+
+        raise LLMProviderError(
+            f"All LLM providers failed. Tried MegaLLM + {len(keys_tried)} Gemini key(s). "
+            f"Last error: {last_error}"
+        ) from last_error
+
+    # ── Lower-level API (kept for callers that build their own chains) ──
+
+    def invoke_with_rotation(
+        self,
+        create_llm_fn: Callable[[str], Any],
+        invoke_fn: Callable[[Any], Any],
+        llm_kwargs: Optional[Dict[str, Any]] = None,
+        max_retries: Optional[int] = None,
+        retry_delay: Optional[float] = None,
+    ) -> Any:
+        """
+        Invoke with failover and rotation, given caller-supplied factories.
+
+        `llm_kwargs` is what fixes the parameter-drop bug: the MegaLLM branch
+        doesn't call `create_llm_fn` (that factory takes a Gemini API key), so
+        without these it built a default client and silently ignored whatever
+        the caller configured. Callers that don't need custom chain wiring
+        should use `generate()` instead.
+        """
+        settings = self._settings
+        llm_kwargs = llm_kwargs or {}
+        if max_retries is None:
+            max_retries = max(len(self._gemini_keys), 1)
+        if retry_delay is None:
+            retry_delay = settings.llm_retry_delay
+
+        # ── MegaLLM first ──
+        if self._mega_key:
+            try:
+                mega_llm = self.create_mega_llm(**llm_kwargs)
+                result = invoke_fn(mega_llm)
+                logger.debug("MegaLLM call succeeded", extra={"component": "llm"})
+                return result
+            except Exception as e:
+                logger.warning(
+                    f"MegaLLM failed: {e}. Falling back to Gemini.",
+                    extra={"component": "llm"},
+                )
+
+        if not self._gemini_keys:
+            raise LLMProviderError("MegaLLM failed and no Gemini keys configured.")
+
+        # ── Gemini with rotation ──
+        last_error: Optional[Exception] = None
+        keys_tried: set = set()
+
+        for _ in range(max_retries):
+            key = self.current_gemini_key
+            if key in keys_tried:
+                break
+            keys_tried.add(key)
+
+            try:
+                return invoke_fn(create_llm_fn(key))
+            except Exception as e:
+                exhausted = self._is_exhaustion_error(e)
+                if not (exhausted or self._is_key_unusable_error(e)):
+                    raise
+                logger.warning(
+                    f"Gemini key {'exhausted' if exhausted else 'unusable'}: {e}",
+                    extra={"component": "llm"},
+                )
+                last_error = e
+                if self.rotate_gemini_key() is None:
+                    break
+                if exhausted and retry_delay > 0:
+                    time.sleep(retry_delay)
 
         raise LLMProviderError(
             f"All LLM providers failed. Tried MegaLLM + {len(keys_tried)} Gemini key(s). "
@@ -256,12 +393,13 @@ class LLMProvider:
         ) from last_error
 
     def status(self) -> dict:
-        """Return provider status for health checks and UI display."""
+        """Provider status for health checks and UI display."""
         return {
             "mega_available": self._mega_key is not None,
             "mega_model": self._settings.mega_model if self._mega_key else None,
             "gemini_keys_total": len(self._gemini_keys),
             "gemini_active_key_index": self._gemini_index + 1 if self._gemini_keys else 0,
             "gemini_model": self._settings.gemini_model,
+            "max_concurrency": self._settings.llm_max_concurrency,
             "total_providers": (1 if self._mega_key else 0) + len(self._gemini_keys),
         }
