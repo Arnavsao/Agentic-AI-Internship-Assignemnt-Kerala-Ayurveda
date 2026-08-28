@@ -1,44 +1,62 @@
 """
-Article Generation API Routes
-================================
+Article Generation Routes
+===========================
 
-WHY async job model:
-Article generation takes 2-4 minutes (4 sequential LLM calls).
-Making this synchronous would:
-  1. Block the server for 4 minutes per request
-  2. Timeout most HTTP clients (30-60s default)
-  3. Leave the user staring at a spinner with no progress info
+Article generation takes roughly a minute, so it runs as a background job:
+POST returns a job ID immediately and the client polls for progress.
 
-Instead, we use a job model:
-  1. POST /articles/generate → returns job_id immediately (~50ms)
-  2. Background task runs the pipeline, updating status in the job dict
-  3. GET /articles/{job_id} → returns current status + partial results
-  4. Frontend polls this endpoint every 2-3 seconds for progress
+WHAT CHANGED:
 
-In a full production setup, the background task would run in a separate
-worker process via Celery/Redis. For this implementation, we use
-FastAPI's BackgroundTasks which runs in the same process but doesn't
-block the response.
+1. JOBS SURVIVE RESTARTS.
+   State lived in a module-level `_jobs` dict — process-local, unbounded, and
+   erased on every reload. A user polling across a deploy got a 404 for work
+   that had actually completed. Jobs now persist to the `article_jobs` table,
+   which was defined in the schema but never used. A startup sweep marks jobs
+   left mid-run by a crash as failed, so nothing polls forever.
+
+2. NO SECOND RAG SYSTEM PER JOB.
+   The old task built a fresh `AyurvedaRAGSystem()` inside every job —
+   re-loading the embedding model and opening a second client against the
+   same store — while ignoring the pipeline that was already injected into
+   the route. Jobs now use the injected pipeline.
+
+3. GENUINELY ASYNC.
+   The task was a sync `def` running the pipeline's blocking calls in the
+   threadpool. It's now async and awaits the LangGraph run, so section writes
+   proceed concurrently and progress is recorded as each node completes.
 """
 
 import json
 import logging
-import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional, Dict
+from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select, update
 
 from backend.app.api.deps import get_rag
+from backend.app.core.database import get_session_factory
+from backend.app.models.schemas import ArticleJob, ArticleJobStatus
+from backend.app.services.agents.graph import generate_article as run_graph
+from backend.app.services.agents.models import ArticleBrief
 from backend.app.services.rag.pipeline import RAGPipeline
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/articles", tags=["Article Generation"])
 
-# In-memory job store (production would use Redis or database)
-_jobs: Dict[str, dict] = {}
+# Node name → (job status, step number) for progress reporting.
+NODE_PROGRESS = {
+    "outline": (ArticleJobStatus.OUTLINING, 1),
+    "write_section": (ArticleJobStatus.WRITING, 2),
+    "assemble_draft": (ArticleJobStatus.WRITING, 2),
+    "fact_check": (ArticleJobStatus.FACT_CHECKING, 3),
+    "revise": (ArticleJobStatus.FACT_CHECKING, 3),
+    "tone_edit": (ArticleJobStatus.TONE_EDITING, 4),
+}
+
+TERMINAL_STATUSES = {ArticleJobStatus.COMPLETED, ArticleJobStatus.FAILED}
 
 
 # ── Request/Response Models ──
@@ -55,11 +73,10 @@ class ArticleBriefRequest(BaseModel):
 class ArticleJobResponse(BaseModel):
     """Current state of an article generation job."""
     job_id: str
-    status: str  # queued, outlining, writing, fact_checking, tone_editing, completed, failed
-    current_step: int  # 0-4
+    status: str
+    current_step: int
     total_steps: int = 4
 
-    # Partial results (populated as pipeline progresses)
     outline: Optional[dict] = None
     fact_check_score: Optional[float] = None
     style_score: Optional[float] = None
@@ -73,103 +90,154 @@ class ArticleJobResponse(BaseModel):
     completed_at: Optional[str] = None
 
 
+def _status_value(status) -> str:
+    return status.value if hasattr(status, "value") else str(status)
+
+
+def _to_response(job: ArticleJob) -> ArticleJobResponse:
+    """Map a job row to the API shape."""
+    return ArticleJobResponse(
+        job_id=job.id,
+        status=_status_value(job.status),
+        current_step=job.current_step,
+        outline=json.loads(job.outline_json) if job.outline_json else None,
+        fact_check_score=job.fact_check_score,
+        style_score=job.style_score,
+        final_content=job.final_content,
+        citations=json.loads(job.citations_json) if job.citations_json else None,
+        editor_notes=json.loads(job.editor_notes_json) if job.editor_notes_json else None,
+        ready_for_editor=job.ready_for_editor,
+        error_message=job.error_message,
+        created_at=job.created_at.isoformat() if job.created_at else "",
+        completed_at=job.completed_at.isoformat() if job.completed_at else None,
+    )
+
+
+async def _update_job(job_id: str, **fields) -> None:
+    """Patch a job row in its own short transaction."""
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            update(ArticleJob).where(ArticleJob.id == job_id).values(**fields)
+        )
+        await session.commit()
+
+
+async def sweep_stale_jobs() -> int:
+    """
+    Mark jobs left in a non-terminal state as failed.
+
+    Called at startup: a job that was mid-run when the process died has no
+    worker any more, and without this it would sit at "writing" forever while
+    a client polls it.
+    """
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(
+            update(ArticleJob)
+            .where(ArticleJob.status.not_in(list(TERMINAL_STATUSES)))
+            .values(
+                status=ArticleJobStatus.FAILED,
+                error_message="Server restarted while this job was running.",
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+        count = result.rowcount or 0
+
+    if count:
+        logger.warning(
+            f"Marked {count} interrupted article job(s) as failed",
+            extra={"component": "articles"},
+        )
+    return count
+
+
 # ── Background task ──
 
-def run_article_pipeline(job_id: str, brief: ArticleBriefRequest, rag: RAGPipeline):
+async def run_article_pipeline(job_id: str, brief: ArticleBriefRequest, rag: RAGPipeline):
     """
-    Run the multi-agent article pipeline as a background task.
+    Run the LangGraph article pipeline, recording progress as it goes.
 
-    This function updates _jobs[job_id] as it progresses through each step,
-    so the polling endpoint can report real-time status.
+    Uses the injected pipeline's retriever and LLM gateway rather than
+    constructing its own RAG stack.
     """
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    await _update_job(
+        job_id,
+        status=ArticleJobStatus.OUTLINING,
+        current_step=1,
+        started_at=datetime.now(timezone.utc),
+    )
 
-    job = _jobs[job_id]
+    async def on_step(node_name: str, update_payload: dict) -> None:
+        """Persist whatever this node produced so polling reflects real progress."""
+        fields = {}
+        status_step = NODE_PROGRESS.get(node_name)
+        if status_step:
+            fields["status"], fields["current_step"] = status_step
+
+        if outline := update_payload.get("outline"):
+            fields["outline_json"] = json.dumps({
+                "title": outline.title,
+                "sections": [s.model_dump() for s in outline.sections],
+            })
+        if draft := update_payload.get("draft"):
+            fields["draft_content"] = draft.content
+        if fact_check := update_payload.get("fact_check"):
+            fields["fact_check_score"] = fact_check.grounding_score
+        if final := update_payload.get("final"):
+            fields["style_score"] = final.style_score
+            fields["final_content"] = final.content
+            fields["citations_json"] = json.dumps(final.citations)
+            fields["editor_notes_json"] = json.dumps(final.editor_notes)
+            fields["ready_for_editor"] = final.ready_for_editor
+
+        if fields:
+            await _update_job(job_id, **fields)
 
     try:
-        # Import agent modules
-        from src.agent_workflow import (
-            ArticleWorkflowOrchestrator, ArticleBrief,
-        )
-        from src.rag_system import AyurvedaRAGSystem
-
-        # We need the original RAG system for the agents (they depend on its interface)
-        # This is a transitional bridge — eventually agents will use the new RAG pipeline directly
-        original_rag = AyurvedaRAGSystem()
-        original_rag.load_and_index_content()
-        orchestrator = ArticleWorkflowOrchestrator(original_rag)
-
-        # Build the brief
-        agent_brief = ArticleBrief(
-            topic=brief.topic,
-            target_audience=brief.target_audience,
-            key_points=brief.key_points,
-            word_count_target=brief.word_count_target,
-            must_include_products=brief.must_include_products,
+        state = await run_graph(
+            brief=ArticleBrief(**brief.model_dump()),
+            retriever=rag.retriever,
+            llm_provider=rag.llm_provider,
+            on_step=on_step,
         )
 
-        # Step 1: Outline
-        job["status"] = "outlining"
-        job["current_step"] = 1
-        outline = orchestrator.outline_agent.generate_outline(agent_brief)
-        job["outline"] = {
-            "title": outline.title,
-            "sections": outline.sections,
-        }
+        final = state.final
+        if final is None:
+            raise RuntimeError("Pipeline finished without producing an article")
 
-        # Step 2: Write
-        job["status"] = "writing"
-        job["current_step"] = 2
-        draft = orchestrator.writer_agent.write_draft(agent_brief, outline)
-
-        # Step 3: Fact-check
-        job["status"] = "fact_checking"
-        job["current_step"] = 3
-        fact_check = orchestrator.fact_checker.fact_check(draft)
-        job["fact_check_score"] = fact_check.grounding_score
-
-        # Step 4: Tone edit
-        job["status"] = "tone_editing"
-        job["current_step"] = 4
-        tone = orchestrator.tone_editor.edit_tone(draft, fact_check)
-        job["style_score"] = tone.style_score
-
-        # Final result
-        final_content = tone.revised_content if tone.revised_content != "NO CHANGES" else draft.content
-        ready = (
-            fact_check.grounding_score >= 0.7
-            and tone.style_score >= 0.7
-            and len(draft.citations) > 0
+        await _update_job(
+            job_id,
+            status=ArticleJobStatus.COMPLETED,
+            current_step=4,
+            final_content=final.content,
+            citations_json=json.dumps(final.citations),
+            editor_notes_json=json.dumps(final.editor_notes),
+            fact_check_score=final.fact_check_score,
+            style_score=final.style_score,
+            ready_for_editor=final.ready_for_editor,
+            completed_at=datetime.now(timezone.utc),
         )
-
-        job["status"] = "completed"
-        job["final_content"] = final_content
-        job["citations"] = draft.citations
-        job["ready_for_editor"] = ready
-        job["editor_notes"] = []
-
-        if fact_check.grounding_score < 0.9:
-            job["editor_notes"].append(
-                f"Fact-check: Some claims may need verification (score: {fact_check.grounding_score:.2f})"
-            )
-        if tone.style_score < 0.85:
-            job["editor_notes"].append(
-                f"Style: Minor tone adjustments may be needed (score: {tone.style_score:.2f})"
-            )
-
-        job["completed_at"] = datetime.now(timezone.utc).isoformat()
 
         logger.info(
-            f"Article pipeline completed: job={job_id}, topic='{brief.topic[:40]}'",
-            extra={"component": "articles"}
+            f"Article job {job_id} completed: grounding={final.fact_check_score:.2f}, "
+            f"style={final.style_score:.2f}, ready={final.ready_for_editor}",
+            extra={"component": "articles"},
         )
 
     except Exception as e:
-        logger.error(f"Article pipeline failed: {e}", exc_info=True, extra={"component": "articles"})
-        job["status"] = "failed"
-        job["error_message"] = str(e)
+        logger.error(
+            f"Article job {job_id} failed: {e}",
+            exc_info=True,
+            extra={"component": "articles"},
+        )
+        await _update_job(
+            job_id,
+            status=ArticleJobStatus.FAILED,
+            error_message=str(e),
+            completed_at=datetime.now(timezone.utc),
+        )
 
 
 # ── Routes ──
@@ -185,35 +253,33 @@ async def generate_article(
     background_tasks: BackgroundTasks,
     rag: RAGPipeline = Depends(get_rag),
 ):
-    """Start async article generation and return job ID immediately."""
+    """Start article generation and return the job ID immediately."""
     job_id = str(uuid4())[:12]
 
-    _jobs[job_id] = {
-        "job_id": job_id,
-        "status": "queued",
-        "current_step": 0,
-        "total_steps": 4,
-        "outline": None,
-        "fact_check_score": None,
-        "style_score": None,
-        "final_content": None,
-        "citations": None,
-        "editor_notes": None,
-        "ready_for_editor": False,
-        "error_message": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "completed_at": None,
-    }
+    factory = get_session_factory()
+    async with factory() as session:
+        session.add(ArticleJob(
+            id=job_id,
+            topic=brief.topic,
+            target_audience=brief.target_audience,
+            key_points_json=json.dumps(brief.key_points),
+            word_count_target=brief.word_count_target,
+            products_json=json.dumps(brief.must_include_products),
+            status=ArticleJobStatus.QUEUED,
+            current_step=0,
+        ))
+        await session.commit()
 
-    # Run pipeline in background
     background_tasks.add_task(run_article_pipeline, job_id, brief, rag)
 
     logger.info(
         f"Article job created: {job_id}, topic='{brief.topic[:40]}'",
-        extra={"component": "articles"}
+        extra={"component": "articles"},
     )
 
-    return ArticleJobResponse(**_jobs[job_id])
+    async with factory() as session:
+        job = await session.get(ArticleJob, job_id)
+        return _to_response(job)
 
 
 @router.get(
@@ -223,22 +289,28 @@ async def generate_article(
     description="Poll this endpoint to track progress of article generation.",
 )
 async def get_article_status(job_id: str):
-    """Get the current status and results of an article generation job."""
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    """Current status and results of one job."""
+    factory = get_session_factory()
+    async with factory() as session:
+        job = await session.get(ArticleJob, job_id)
 
-    return ArticleJobResponse(**_jobs[job_id])
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return _to_response(job)
 
 
 @router.get(
     "",
-    summary="List all article jobs",
+    response_model=List[ArticleJobResponse],
+    summary="List article jobs",
 )
-async def list_article_jobs():
-    """List all article generation jobs (recent first)."""
-    jobs = sorted(
-        _jobs.values(),
-        key=lambda j: j.get("created_at", ""),
-        reverse=True,
-    )
-    return [ArticleJobResponse(**j) for j in jobs[:20]]  # Limit to 20 most recent
+async def list_article_jobs(limit: int = 20):
+    """Recent jobs, newest first."""
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(
+            select(ArticleJob).order_by(ArticleJob.created_at.desc()).limit(limit)
+        )
+        jobs = result.scalars().all()
+
+    return [_to_response(j) for j in jobs]

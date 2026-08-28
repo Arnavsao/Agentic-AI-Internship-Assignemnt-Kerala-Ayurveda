@@ -28,6 +28,7 @@ ONCE at startup, not on the first request. This means:
   - Cleanup (closing DB connections) happens reliably on shutdown
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -69,10 +70,19 @@ async def lifespan(app: FastAPI):
     # 1. Initialize database
     await init_db()
 
-    # 2. Initialize RAG pipeline (loads embeddings, builds/loads index)
+    # 2. Fail any jobs that were mid-flight when the process last stopped.
+    # Their worker is gone, so without this a client polls a job that will
+    # never move off "writing".
+    from backend.app.api.routes.articles import sweep_stale_jobs
+    await sweep_stale_jobs()
+
+    # 3. Initialize RAG pipeline. Loads the embedding model, ensures the
+    # Qdrant collection exists and matches this model, and runs incremental
+    # ingestion. Model/dimension mismatches raise here rather than degrading
+    # retrieval silently at query time.
     logger.info("Initializing RAG pipeline...", extra={"component": "app"})
     rag = get_rag_pipeline()
-    rag.initialize()
+    await asyncio.to_thread(rag.initialize)
     logger.info("RAG pipeline ready", extra={"component": "app"})
 
     logger.info(

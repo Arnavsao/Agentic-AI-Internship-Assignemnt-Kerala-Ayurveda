@@ -107,6 +107,20 @@ async def close_db() -> None:
         logger.info("Database connections closed", extra={"component": "database"})
 
 
+def get_session_factory() -> async_sessionmaker:
+    """
+    The raw session factory, for code outside the request cycle.
+
+    `get_db_session` is a FastAPI dependency and only works where dependency
+    injection applies. Background tasks outlive the request that started them,
+    so they open their own short-lived sessions through this instead of
+    holding a request-scoped one open for the length of the job.
+    """
+    if _session_factory is None:
+        raise RuntimeError("Database not initialized. Call init_db() first.")
+    return _session_factory
+
+
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """
     FastAPI dependency that provides a database session.

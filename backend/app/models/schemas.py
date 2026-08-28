@@ -132,8 +132,8 @@ class Chunk(Base):
     # Parent chunk ID for parent-child retrieval strategy
     parent_chunk_id: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
 
-    # ChromaDB reference — the ID used in the vector store
-    chroma_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # Vector store reference — the Qdrant point ID for this chunk
+    vector_point_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
 
     char_count: Mapped[int] = mapped_column(Integer, default=0)
     token_count_approx: Mapped[int] = mapped_column(Integer, default=0)

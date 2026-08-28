@@ -100,7 +100,7 @@ async def query_knowledge_base(
       - Documented (visit /docs to see the API schema)
     """
     try:
-        response = rag.query(request.query, use_cache=request.use_cache)
+        response = await rag.aquery(request.query, use_cache=request.use_cache)
 
         return QueryResponseModel(
             answer=response.answer,
@@ -129,15 +129,21 @@ async def query_knowledge_base(
 
 @router.post(
     "/reindex",
-    summary="Force re-index all documents",
-    description="Rebuilds the vector index from all source documents. Use after adding/removing files.",
+    summary="Re-index documents",
+    description=(
+        "Syncs the vector index with the content directory. Incremental by "
+        "default — files whose content is unchanged are skipped without "
+        "re-embedding. Pass force=true to drop the collection and rebuild "
+        "everything (required after changing the embedding model)."
+    ),
 )
 async def reindex(
+    force: bool = False,
     rag: RAGPipeline = Depends(get_rag),
 ):
-    """Trigger a full re-index of all documents."""
+    """Sync the index with the content directory."""
     try:
-        stats = rag.reindex()
+        stats = rag.sync(force=force)
         return {"status": "success", **stats}
     except Exception as e:
         logger.error(f"Reindex failed: {e}", exc_info=True, extra={"component": "api"})
