@@ -124,77 +124,13 @@ class TestChunkDocument:
         assert any("Ashwagandha" in sid for sid in section_ids)
 
 
-class TestBM25Index:
-    """Test the BM25 keyword search implementation."""
-
-    def test_basic_search(self):
-        from backend.app.services.rag.retriever import BM25Index
-        from langchain_core.documents import Document
-
-        docs = [
-            Document(page_content="Ashwagandha supports stress resilience", metadata={}),
-            Document(page_content="Triphala aids digestive health", metadata={}),
-            Document(page_content="Brahmi oil for scalp nourishment", metadata={}),
-        ]
-
-        index = BM25Index()
-        index.index(docs)
-
-        results = index.search("stress Ashwagandha", k=3)
-        assert len(results) > 0
-        # The Ashwagandha document should rank first
-        assert "Ashwagandha" in results[0][0].page_content
-
-    def test_exact_keyword_match(self):
-        """BM25 should find exact keyword matches that semantic search might miss."""
-        from backend.app.services.rag.retriever import BM25Index
-        from langchain_core.documents import Document
-
-        docs = [
-            Document(page_content="Product ID KA-P001 Triphala Capsules", metadata={}),
-            Document(page_content="General information about herbs", metadata={}),
-        ]
-
-        index = BM25Index()
-        index.index(docs)
-
-        results = index.search("KA-P001", k=2)
-        assert len(results) > 0
-        assert "KA-P001" in results[0][0].page_content
-
-    def test_empty_index(self):
-        from backend.app.services.rag.retriever import BM25Index
-
-        index = BM25Index()
-        index.index([])
-
-        results = index.search("test query", k=5)
-        assert results == []
-
-
-class TestRRF:
-    """Test Reciprocal Rank Fusion."""
-
-    def test_rrf_combines_rankings(self):
-        from backend.app.services.rag.retriever import reciprocal_rank_fusion
-        from langchain_core.documents import Document
-
-        doc_a = Document(page_content="A", metadata={"content_hash": "aaa"})
-        doc_b = Document(page_content="B", metadata={"content_hash": "bbb"})
-        doc_c = Document(page_content="C", metadata={"content_hash": "ccc"})
-
-        # List 1: A > B > C
-        list1 = [(doc_a, 0.9), (doc_b, 0.7), (doc_c, 0.5)]
-        # List 2: B > A > C (B ranks higher here)
-        list2 = [(doc_b, 0.95), (doc_a, 0.6), (doc_c, 0.3)]
-
-        fused = reciprocal_rank_fusion([list1, list2])
-
-        # A and B should both score well (high in at least one list)
-        assert len(fused) == 3
-        # The exact order depends on RRF math, but both A and B should be in top 2
-        top2_content = {f[0].page_content for f in fused[:2]}
-        assert "A" in top2_content or "B" in top2_content
+# BM25 keyword search and Reciprocal Rank Fusion used to be implemented in
+# this process (retriever.BM25Index / reciprocal_rank_fusion) and were unit
+# tested here. Both now run inside Qdrant: documents carry a sparse vector
+# alongside the dense one, and the Query API fuses the two rankings with RRF
+# server-side. The behaviour those tests covered — exact keyword matching and
+# rank fusion — is verified end-to-end against real models in
+# tests/integration/test_retrieval.py instead.
 
 
 class TestLRUCache:
