@@ -488,8 +488,16 @@ the *same unmodified draft*, so a rejected article could only be rejected again
 — the source even carried a comment reading "In production, would have revision
 agent here." `revise` is that agent.
 
-**Cost.** Roughly 5–7 sequential LLM steps (sections run in parallel) rather
-than 11–15 strictly sequential ones.
+**Cost, measured.** Roughly 5–7 sequential LLM steps (sections run in
+parallel) rather than 11–15. A verified run produced a six-section, 1,246-word
+article in **3m40s** with grounding 0.91 and style 0.95.
+
+That is *not* meaningfully faster than the original 2–3 minutes, and it is
+worth being clear about why: each `gemini-3-pro-preview` call costs 20–60 s,
+and the concurrency cap that keeps the free tier happy serialises parallel
+section writes into batches. Fewer calls bought grounding quality and cost,
+not wall-clock. The lever for latency is a faster model on the section-write
+node, not further restructuring of the graph.
 
 ### LLM Provider Strategy
 

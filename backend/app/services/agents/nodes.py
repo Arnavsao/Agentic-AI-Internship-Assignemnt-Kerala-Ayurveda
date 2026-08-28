@@ -8,8 +8,15 @@ Every agent in the original pipeline reached the corpus through
 `rag.answer_user_query()` — a full retrieval *plus an LLM generation* — so
 each "lookup" cost a round trip and handed back a paraphrase rather than the
 source text. The writer then grounded its citations on a summary of a summary.
-That indirection accounted for most of the 11-15 sequential LLM calls behind
-the 2-3 minute runtime, and it degraded grounding at the same time.
+That indirection accounted for most of the 11-15 sequential LLM calls in the
+original pipeline, and it degraded grounding at the same time.
+
+Note that fewer calls has not translated into a dramatically faster wall
+clock: a measured run took ~3m40s for a six-section article. Each call to
+gemini-3-pro-preview costs 20-60s, and the concurrency cap (needed to respect
+the free-tier rate limit) serialises the parallel section writes into batches.
+The win here is grounding quality and cost, not latency. If latency matters,
+the lever is a faster model for the section writes, not further restructuring.
 
 These nodes call `retriever.retrieve()` and read the chunks directly. Lookups
 become vector queries measured in milliseconds, and the text an agent cites is

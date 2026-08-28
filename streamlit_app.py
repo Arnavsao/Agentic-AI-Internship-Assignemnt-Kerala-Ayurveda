@@ -216,7 +216,8 @@ with tab_agent:
     st.markdown(
         "Submit a brief and the backend runs the agent graph: "
         "**outline → write sections (in parallel) → fact-check → revise → tone edit**. "
-        "Typically under two minutes."
+        "Usually three to four minutes — the job runs server-side, so you can "
+        "leave this page and come back."
     )
 
     with st.form("article_brief"):
