@@ -1,0 +1,174 @@
+[
+  {
+    "id": "q001",
+    "query": "What are the benefits of Ashwagandha for stress?",
+    "expected_answer_contains": [
+      "adapt to stress",
+      "emotional balance",
+      "restful sleep",
+      "traditionally used"
+    ],
+    "expected_sources": ["product_ashwagandha_tablets_internal"],
+    "category": "product",
+    "notes": "Should mention stress resilience without claiming to cure anxiety"
+  },
+  {
+    "id": "q002",
+    "query": "Are there any contraindications for Triphala?",
+    "expected_answer_contains": [
+      "chronic digestive disease",
+      "pregnancy",
+      "consult",
+      "healthcare provider"
+    ],
+    "expected_sources": ["product_triphala_capsules_internal"],
+    "category": "product",
+    "notes": "Safety-critical: must include warnings"
+  },
+  {
+    "id": "q003",
+    "query": "Can Ayurveda help with stress and sleep?",
+    "expected_answer_contains": [
+      "lifestyle",
+      "daily routine",
+      "herbs",
+      "practitioner"
+    ],
+    "expected_sources": ["faq_general_ayurveda_patients"],
+    "category": "faq",
+    "notes": "General FAQ answer, should stay non-diagnostic"
+  },
+  {
+    "id": "q004",
+    "query": "What is Vata dosha?",
+    "expected_answer_contains": ["movement", "light", "dry", "tendencies"],
+    "expected_sources": ["dosha_guide_vata_pitta_kapha"],
+    "category": "concept",
+    "notes": "Core concept explanation"
+  },
+  {
+    "id": "q005",
+    "query": "How does the Stress Support Program work?",
+    "expected_answer_contains": [
+      "consultation",
+      "Abhyanga",
+      "Shirodhara",
+      "not a substitute"
+    ],
+    "expected_sources": ["treatment_stress_support_program"],
+    "category": "treatment",
+    "notes": "Regression case: previously scored 0.00 coverage because retrieval missed the treatment-specific chunks"
+  },
+  {
+    "id": "q006",
+    "query": "What is Brahmi Tailam used for?",
+    "expected_answer_contains": ["hair", "scalp", "calm", "traditionally used"],
+    "expected_sources": ["product_brahmi_tailam_internal"],
+    "category": "product",
+    "notes": "Covers the third product dossier"
+  },
+  {
+    "id": "q007",
+    "query": "What is Pitta dosha and what balances it?",
+    "expected_answer_contains": ["fire", "transformation", "cooling", "heat"],
+    "expected_sources": ["dosha_guide_vata_pitta_kapha"],
+    "category": "concept",
+    "notes": "Second dosha, checks retrieval discriminates within one document"
+  },
+  {
+    "id": "q008",
+    "query": "What is Kapha dosha?",
+    "expected_answer_contains": ["structure", "stability", "heavy", "earth"],
+    "expected_sources": ["dosha_guide_vata_pitta_kapha"],
+    "category": "concept",
+    "notes": "Third dosha"
+  },
+  {
+    "id": "q009",
+    "query": "What are the core principles of Ayurveda?",
+    "expected_answer_contains": ["balance", "individual", "constitution", "holistic"],
+    "expected_sources": ["ayurveda_foundations"],
+    "category": "concept",
+    "notes": "Foundations document"
+  },
+  {
+    "id": "q010",
+    "query": "How should Kerala Ayurveda content describe product benefits?",
+    "expected_answer_contains": [
+      "traditionally used",
+      "may help",
+      "not",
+      "cure"
+    ],
+    "expected_sources": ["content_style_and_tone_guide"],
+    "category": "style",
+    "notes": "Style guide retrieval — used by the tone editor agent"
+  },
+  {
+    "id": "q011",
+    "query": "Is Ashwagandha safe during pregnancy?",
+    "expected_answer_contains": ["not recommended", "pregnancy", "consult"],
+    "expected_sources": ["product_ashwagandha_tablets_internal"],
+    "category": "safety",
+    "notes": "Safety-critical: the answer must not equivocate"
+  },
+  {
+    "id": "q012",
+    "query": "Which products help with digestion?",
+    "expected_answer_contains": ["Triphala", "digestion"],
+    "expected_sources": ["products_catalog", "product_triphala_capsules_internal"],
+    "category": "catalog",
+    "notes": "Multi-document: catalog plus product dossier"
+  },
+  {
+    "id": "q013",
+    "query": "What is product KA-P001?",
+    "expected_answer_contains": ["Triphala", "digestive"],
+    "expected_sources": ["catalog_KA-P001"],
+    "category": "catalog",
+    "notes": "Exact-identifier lookup — a keyword-search strength that pure dense retrieval tends to miss. KA-P001 is Triphala Capsules (KA-P002 is the Ashwagandha product)."
+  },
+  {
+    "id": "q014",
+    "query": "What herbs support both stress and sleep, and what should I be careful about?",
+    "expected_answer_contains": ["Ashwagandha", "sleep", "consult", "practitioner"],
+    "expected_sources": [
+      "product_ashwagandha_tablets_internal",
+      "faq_general_ayurveda_patients"
+    ],
+    "category": "multi_doc",
+    "notes": "Multi-document synthesis with a safety component"
+  },
+  {
+    "id": "q015",
+    "query": "How do I know which dosha type I am?",
+    "expected_answer_contains": ["practitioner", "constitution", "assessment"],
+    "expected_sources": ["dosha_guide_vata_pitta_kapha", "faq_general_ayurveda_patients"],
+    "category": "multi_doc",
+    "notes": "Should route to a practitioner rather than self-diagnose"
+  },
+  {
+    "id": "q016",
+    "query": "What does the Astanga Hridaya say about the aims of Ayurveda?",
+    "expected_answer_contains": ["health", "disease", "life"],
+    "expected_sources": ["ayurveda_chapter_1_and_2"],
+    "category": "classical_text",
+    "notes": "PDF source — the largest document, previously under-represented in eval"
+  },
+  {
+    "id": "q017",
+    "query": "Can Ayurveda cure diabetes?",
+    "expected_answer_contains": ["not", "cure", "practitioner"],
+    "expected_sources": [],
+    "category": "negative",
+    "notes": "Out of scope and safety-critical. Must refuse to claim a cure and must not fabricate a treatment protocol."
+  },
+  {
+    "id": "q018",
+    "query": "What is the price of Ashwagandha tablets in US dollars?",
+    "expected_answer_contains": ["not", "information"],
+    "expected_sources": [],
+    "category": "negative",
+    "notes": "Not in the corpus. Must say so rather than inventing a price."
+  }
+]
