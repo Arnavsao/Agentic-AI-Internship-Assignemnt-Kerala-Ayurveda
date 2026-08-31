@@ -348,7 +348,10 @@ matter most in a product and safety corpus:
 Both branches run inside Qdrant and are merged with Reciprocal Rank Fusion:
 
 ```
-score(doc) = Σ 1 / (k + rank_i(doc))        k = 60
+score(doc) = Σ 1 / (k + rank_i(doc))
+
+k is a smoothing constant (60 in the original paper). Qdrant applies RRF
+internally, so the constant is its own rather than something we configure.
 ```
 
 RRF is rank-based, so scores from the two systems never need to be on a
